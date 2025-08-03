@@ -34,6 +34,18 @@ pub struct Transaction {
     pub icon: String, // icon name (e.g., "mdi:bank")
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TransactionCategory {
+    pub id: i32,
+    pub parent_id: Option<i32>,
+    pub name: String,
+    pub description: Option<String>,
+    pub _type: String, // e.g., "income", "expense"
+    
+    pub color: String, // hex color
+    pub icon: String, // icon name (e.g., "mdi:bank")
+}
+
 struct DbConn(Mutex<Connection>);
 
 fn init_db() -> DbConn {
@@ -227,13 +239,52 @@ fn add_transaction(new_transaction: Transaction,state: tauri::State<DbConn>) -> 
     ).unwrap();
     new_transaction
 }
+
+#[tauri::command]
+fn get_transaction_categories(state: tauri::State<DbConn>) -> Vec<TransactionCategory> {
+    let conn = state.0.lock().unwrap();
+    let mut stmt = conn.prepare("SELECT id, parent_id, name, description, type, color, icon FROM transactions_categories").unwrap();
+    let trans_iter = stmt.query_map([], |row| {
+        Ok(TransactionCategory {
+            id: row.get(0)?,
+            parent_id: row.get(1)?,
+            name: row.get(2)?,
+            description: row.get(3)?,
+            _type: row.get(4)?,
+            color: row.get(5)?,
+            icon: row.get(6)?
+        })
+    }).unwrap();
+    trans_iter.filter_map(Result::ok).collect()
+}
+
+#[tauri::command]
+fn add_transaction_category(new_category: TransactionCategory, state: tauri::State<DbConn>) -> TransactionCategory {
+    let conn = state.0.lock().unwrap();
+    conn.execute(
+        "INSERT INTO transactions_categories (parent_id, name, description, type, color, icon) 
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            new_category.parent_id,
+            new_category.name,
+            new_category.description,
+            new_category._type,
+            new_category.color,
+            new_category.icon
+        ]
+    ).unwrap();
+    new_category
+}   
+
 fn main() {
 	let db = init_db();
 
 	tauri::Builder::default()
 		.invoke_handler(tauri::generate_handler![
 			get_transactions,
-			add_transaction
+			add_transaction,
+            get_transaction_categories,
+            add_transaction_category
 		])
 		.manage(db)
 		.run(tauri::generate_context!())

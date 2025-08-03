@@ -2,7 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import MainLayout from './layouts/MainLayout';
 import TransactionsPage from './views/TransactionsPage';
-// import TransactionsCategoryPage from './views/TransactionsCategoryPage';
+import TransactionsCategoryPage from './views/TransactionsCategoryPage';
 // import AccountsPage from './views/AccountsPage';
 // import AccountsCategoryPage from './views/AccountsCategoryPage';
 
@@ -17,8 +17,8 @@ export default function App() {
       <Routes>
         <Route path="/" element={<MainLayout />}>  
           <Route path="transactions" element={<TransactionsPage />} />
-          {/* <Route path="transactions_categories" element={<TransactionsCategoryPage />} />
-          <Route path="accounts" element={<AccountsPage />} />
+          <Route path="transactions_categories" element={<TransactionsCategoryPage />} />
+          {/* <Route path="accounts" element={<AccountsPage />} />
           <Route path="accounts_categories" element={<AccountsCategoryPage />} /> */}
         </Route>
       </Routes>

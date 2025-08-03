@@ -22,7 +22,7 @@ export function useTransactionsViewModel() {
 
 	const addTransaction = async (transaction: Transaction) => {
 		try {
-			const newTransaction = await invoke<Transaction>('add_transaction', { new_transaction: transaction });
+			const newTransaction = await invoke<Transaction>('add_transaction', { newTransaction: transaction });
 			setTransactions((prev) => [...prev, newTransaction]);
 		} catch (err) {
 			setError('Errore nell\'aggiunta della transazione: ' + err);

@@ -4,7 +4,7 @@ export interface Transaction {
   from_account_id?: number;
   to_account_id?: number;
 
-  type: string;
+  _type: string;
   status: string;
   method: string;
 
