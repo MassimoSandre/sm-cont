@@ -10,7 +10,7 @@ export default function Sidebar() {
   ];
 
   return (
-    <nav className="w-64 bg-gray-100 p-4">
+    <nav className="w-64 bg-neutral-100 p-4 border-r border-neutral-200">
       <ul>
         {links.map(link => (
           <li key={link.to}>
