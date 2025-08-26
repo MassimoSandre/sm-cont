@@ -4,7 +4,7 @@ export interface TransactionCategory {
 
     name: string;
     description?: string;
-    _type: string;
+    type: string;
 
     color: string;
     icon: string;

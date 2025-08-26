@@ -1,38 +1,59 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { supabase, getSession } from '../supabaseClient';
 import type { TransactionCategory } from '../models/TransactionCategory';
-import { invoke } from '@tauri-apps/api/core';
 
 export function useTransactionsCategoryViewModel() {
-    const [transactionCategories, setTransactionCategories] = useState<TransactionCategory[]>([]);
-    const [loading, setLoading] = useState<boolean>(true);
-    const [error, setError] = useState<string | null>(null);
+  const [transactionCategories, setTransactionCategories] = useState<TransactionCategory[]>([]);
+  const [session, setSession] = useState<any>(null);
 
-    useEffect(() => {
-        invoke<TransactionCategory[]>('get_transaction_categories')
-            .then((data) => {
-                setTransactionCategories(data);
-            })
-            .catch((err) => {
-                setError('Error loading transaction categories: ' + err);
-            })
-            .finally(() => {
-                setLoading(false);
-            });
-    }, []);
+  useEffect(() => {
+    (async () => {
+      try {
+        const session = await getSession();
+        setSession(session);
+        await fetchCategories();
+      } catch (err) {
+        console.error("Login error", err);
+      }
+    })();
+  }, []);
 
-    const addTransactionCategory = async (ttt: TransactionCategory) => {
-        try {
-            const aaa = await invoke<TransactionCategory>('add_transaction_category', { 
-                newCategory: ttt
-            });
-            setTransactionCategories((prev) => [...prev, aaa]);
-        } catch (err) {
-            setError('Error adding transaction category: ' + err);
+  async function fetchCategories() {
+    const { data, error } = await supabase
+      .from('transactions_categories')
+      .select('*');
+    if (error) {
+      console.error("Fetch error", error);
+    } else {
+      setTransactionCategories(data || []);
+    }
+  }
+
+    async function addTransactionCategory(newCategory: TransactionCategory) {
+        if (!session) return;
+
+        const record = {
+            user_id: session.user.id,       // obbligatorio da schema
+            parent_id: newCategory.parent_id ?? null,
+            name: newCategory.name,
+            description: newCategory.description ?? null,
+            type: newCategory.type,        // mapping esplicito
+            color: newCategory.color || "#000000",
+            icon: newCategory.icon || "mdi:bank",
+        };
+
+        const { data, error } = await supabase
+        .from("transactions_categories")
+        .insert([record])
+        .select();
+
+        if (error) {
+        console.error("Insert error", error);
+        } else {
+        setTransactionCategories(prev => [...prev, ...(data || [])]);
         }
-    };
+    }
 
-    return {
-        transactionCategories,
-        addTransactionCategory,
-    };
+
+  return { transactionCategories, addTransactionCategory };
 }

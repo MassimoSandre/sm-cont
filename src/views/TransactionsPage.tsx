@@ -34,7 +34,7 @@ export const TransactionsPage: React.FC = () => {
         from_account_id: parseInt(from_account_id, 10) || undefined,
         to_account_id: parseInt(to_account_id, 10) || undefined,
 
-        _type: type,
+        type: type,
         status: status,
         method: method,
 
@@ -108,7 +108,7 @@ export const TransactionsPage: React.FC = () => {
               <td>{s.from_account_id}</td>
               <td>{s.to_account_id}</td>
 
-              <td>{s._type}</td>
+              <td>{s.type}</td>
               <td>{s.status}</td>
               <td>{s.method}</td>
 
