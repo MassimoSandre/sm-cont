@@ -1,6 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { useAccountsViewModel } from '../viewModels/useAccountsViewModel';
+import { useAccountsCategoryViewModel } from '../viewModels/useAccountsCategoryViewModel';
+import AccountCategoryPicker from '../components/AccountCategoryPicker';
 import type { Account } from '../models/Account';
+import type { AccountCategory } from '../models/AccountCategory';
 
 function formatBalance(cents: number, decimals = 2, currency = 'EUR') {
   const value = cents / Math.pow(10, decimals);
@@ -11,8 +14,131 @@ function formatBalance(cents: number, decimals = 2, currency = 'EUR') {
   }
 }
 
+/* utility: convert flat categories into tree */
+type CategoryNode = AccountCategory & { children?: CategoryNode[] };
+function buildCategoryTree(categories: AccountCategory[]): CategoryNode[] {
+  const map = new Map<number, CategoryNode>();
+  const roots: CategoryNode[] = [];
+  categories.forEach(cat => map.set(cat.id, { ...cat, children: [] }));
+  categories.forEach(cat => {
+    if (cat.parent_id != null) {
+      const parent = map.get(cat.parent_id);
+      if (parent) parent.children?.push(map.get(cat.id)!);
+      else roots.push(map.get(cat.id)!);
+    } else {
+      roots.push(map.get(cat.id)!);
+    }
+  });
+  return roots;
+}
+
+/* utility: convert flat accounts into tree (same approach) */
+type AccountNode = Account & { children?: AccountNode[] };
+function buildAccountsTree(accounts: Account[]): AccountNode[] {
+  const map = new Map<number, AccountNode>();
+  const roots: AccountNode[] = [];
+  accounts.forEach(a => map.set(a.id, { ...a, children: [] }));
+  accounts.forEach(a => {
+    if (a.parent_id != null) {
+      const parent = map.get(a.parent_id);
+      if (parent) parent.children?.push(map.get(a.id)!);
+      else roots.push(map.get(a.id)!);
+    } else {
+      roots.push(map.get(a.id)!);
+    }
+  });
+  return roots;
+}
+
+/* Account card component (recursive) */
+const AccountCard: React.FC<{
+  acc: AccountNode;
+  level?: number;
+  selectedId?: number | null;
+  onSelect: (acc: AccountNode) => void;
+  onEdit: (acc: AccountNode) => void;
+  onAddChild: (acc: AccountNode) => void;
+  onDelete: (acc: AccountNode) => void;
+}> = ({ acc, level = 0, selectedId, onSelect, onEdit, onAddChild, onDelete }) => {
+  const [expanded, setExpanded] = useState(false);
+  const isSelected = selectedId === acc.id;
+  return (
+    <div style={{ paddingLeft: `${level * 20}px` }} className="mb-2">
+      <div
+        className={`flex items-center gap-3 p-3 rounded-lg shadow cursor-pointer transition hover:bg-gray-50
+          ${level % 2 === 1 ? 'bg-gray-50' : 'bg-white'}
+          ${isSelected ? 'ring-2 ring-blue-400' : ''}`}
+        onClick={() => onSelect(acc)}
+      >
+        {acc.children && acc.children.length > 0 ? (
+          <button
+            onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
+            className="select-none px-1"
+            aria-label={expanded ? 'Collapse' : 'Expand'}
+          >
+            {expanded ? '▼' : '▶'}
+          </button>
+        ) : (
+          <div className="w-6" />
+        )}
+
+        <div className="flex-1 min-w-0">
+          <div className="font-semibold truncate">{acc.name}</div>
+          <div className="text-sm text-gray-500 truncate">{acc.description ?? '—'}</div>
+          <div className="text-xs text-gray-400">Type: {acc.type} • Cat: {acc.category_id}</div>
+        </div>
+
+        <div className="text-right">
+          <div className="font-mono">{formatBalance(acc.balance, acc.balance_decimal, acc.currency)}</div>
+          <div className="text-xs text-gray-500">{acc.virtual ? 'Virtual' : 'Real'}</div>
+        </div>
+
+        <div className="flex gap-2 ml-2">
+          <button
+            onClick={(e) => { e.stopPropagation(); onAddChild(acc); }}
+            className="px-2 py-1 border rounded text-sm text-green-700"
+            title="Add subaccount"
+          >
+            ➕
+          </button>
+
+          <button
+            onClick={(e) => { e.stopPropagation(); onEdit(acc); }}
+            className="px-2 py-1 border rounded text-sm"
+            title="Edit"
+          >
+            Edit
+          </button>
+
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(acc); }}
+            className="px-2 py-1 border rounded text-sm text-red-600"
+            title="Delete"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+
+      {expanded && acc.children?.map(child => (
+        <AccountCard
+          key={child.id}
+          acc={child}
+          level={level + 1}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          onEdit={onEdit}
+          onAddChild={onAddChild}
+          onDelete={onDelete}
+        />
+      ))}
+    </div>
+  );
+};
+
 export const AccountsPage: React.FC = () => {
   const { accounts, loading, error, addAccount, updateAccount, deleteAccount, fetchAccounts } = useAccountsViewModel();
+  const { accountCategories, fetchCategories: fetchAccountCategories } = useAccountsCategoryViewModel();
 
   const [selected, setSelected] = useState<Account | null>(null);
   const [form, setForm] = useState({
@@ -23,14 +149,22 @@ export const AccountsPage: React.FC = () => {
     type: '',
     balance: 0,
     balance_decimal: 2,
-    virtual: false,
-    budget: false,
     currency: 'EUR',
     color: '#000000',
     icon: 'mdi:bank',
   });
 
-  // when user selects an account, populate form
+  // category selector UI state
+  const [catSelectorOpen, setCatSelectorOpen] = useState(false);
+  const [selectedCategoryNode, setSelectedCategoryNode] = useState<AccountCategory | null>(null);
+
+  // category tree memoized
+  const categoryTree = useMemo(() => buildCategoryTree(accountCategories), [accountCategories]);
+
+  // accounts tree for rendering
+  const accountsTree = useMemo(() => buildAccountsTree(accounts), [accounts]);
+
+  // select an account -> populate form
   const onSelect = (a: Account | null) => {
     setSelected(a);
     if (a) {
@@ -42,12 +176,13 @@ export const AccountsPage: React.FC = () => {
         type: a.type,
         balance: a.balance,
         balance_decimal: a.balance_decimal,
-        virtual: a.virtual,
-        budget: a.budget,
         currency: a.currency,
         color: a.color,
         icon: a.icon,
       });
+      // sync selectedCategoryNode if categories loaded
+      const cat = accountCategories.find(c => c.id === a.category_id);
+      setSelectedCategoryNode(cat ?? null);
     } else {
       setForm({
         category_id: undefined,
@@ -57,13 +192,31 @@ export const AccountsPage: React.FC = () => {
         type: '',
         balance: 0,
         balance_decimal: 2,
-        virtual: false,
-        budget: false,
         currency: 'EUR',
         color: '#000000',
         icon: 'mdi:bank',
       });
+      setSelectedCategoryNode(null);
     }
+  };
+
+  // open form to create a NEW subaccount under parentAcc
+  const openCreateSubaccount = (parentAcc: Account) => {
+    setSelected(null); // create new
+    setForm({
+      category_id: parentAcc.category_id,
+      parent_id: parentAcc.id,
+      name: '',
+      description: '',
+      type: '',
+      balance: 0,
+      balance_decimal: 2,
+      currency: parentAcc.currency ?? 'EUR',
+      color: '#000000',
+      icon: 'mdi:bank',
+    });
+    const cat = accountCategories.find(c => c.id === parentAcc.category_id);
+    setSelectedCategoryNode(cat ?? null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -71,7 +224,7 @@ export const AccountsPage: React.FC = () => {
     try {
       if (selected) {
         await updateAccount(selected.id, {
-            id: selected.id,
+          id: selected.id, // required
           category_id: form.category_id!,
           parent_id: form.parent_id ?? undefined,
           name: form.name,
@@ -79,15 +232,15 @@ export const AccountsPage: React.FC = () => {
           type: form.type,
           balance: form.balance,
           balance_decimal: form.balance_decimal,
-          virtual: form.virtual,
-          budget: form.budget,
+          budget: false,
+          virtual: false,
           currency: form.currency,
           color: form.color,
           icon: form.icon,
         });
       } else {
         await addAccount({
-            id: 0, // backend assigns ID
+          id: 0, // will be ignored
           category_id: form.category_id ?? 0,
           parent_id: form.parent_id ?? undefined,
           name: form.name,
@@ -95,8 +248,8 @@ export const AccountsPage: React.FC = () => {
           type: form.type || 'other',
           balance: form.balance,
           balance_decimal: form.balance_decimal,
-          virtual: form.virtual,
-          budget: form.budget,
+          virtual: false, // forced
+          budget: false,  // forced
           currency: form.currency,
           color: form.color,
           icon: form.icon,
@@ -135,37 +288,24 @@ export const AccountsPage: React.FC = () => {
           <h2 className="text-2xl font-bold">Accounts</h2>
           <div>
             <button onClick={() => onSelect(null)} className="mr-2 px-3 py-1 border rounded">New</button>
-            <button onClick={() => fetchAccounts()} className="px-3 py-1 border rounded">Refresh</button>
+            <button onClick={() => { fetchAccounts(); fetchAccountCategories(); }} className="px-3 py-1 border rounded">Refresh</button>
           </div>
         </div>
 
         {loading && <div>Loading…</div>}
         {error && <div className="text-red-600">Error: {error}</div>}
 
-        <div className="grid grid-cols-1 gap-3">
-          {accounts.map(a => (
-            <div key={a.id} className={`flex items-center justify-between p-3 rounded-lg shadow ${selected?.id === a.id ? 'ring-2 ring-blue-400' : 'bg-white'}`}>
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full border" style={{ backgroundColor: a.color }} />
-                <div>
-                  <div className="font-semibold">{a.name}</div>
-                  <div className="text-sm text-gray-500">{a.description ?? '—'}</div>
-                  <div className="text-xs text-gray-400">Type: {a.type} • Category: {a.category_id} {a.parent_id ? `• Parent: ${a.parent_id}` : ''}</div>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-4">
-                <div className="text-right">
-                  <div className="font-mono">{formatBalance(a.balance, a.balance_decimal, a.currency)}</div>
-                  <div className="text-xs text-gray-500">{a.virtual ? 'Virtual' : 'Real'} • {a.budget ? 'Budget' : ''}</div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button onClick={() => onSelect(a)} className="px-2 py-1 border rounded text-sm">Edit</button>
-                  <button onClick={() => handleDelete(a)} className="px-2 py-1 border rounded text-sm text-red-600">Delete</button>
-                </div>
-              </div>
-            </div>
+        <div>
+          {accountsTree.map(root => (
+            <AccountCard
+              key={root.id}
+              acc={root}
+              selectedId={selected?.id || null}
+              onSelect={(a) => onSelect(a)}
+              onEdit={(a) => onSelect(a)}
+              onAddChild={(a) => openCreateSubaccount(a)}
+              onDelete={(a) => handleDelete(a)}
+            />
           ))}
         </div>
 
@@ -190,14 +330,60 @@ export const AccountsPage: React.FC = () => {
           <label className="text-xs font-medium">Description</label>
           <input className="border p-2 rounded" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
 
+          {/* Category selector: button + popover using CategoryPicker */}
+          <div>
+            <label className="text-xs font-medium">Category</label>
+            <div className="flex gap-2 items-center">
+              <div className="flex-1 min-w-0">
+                <div className="border p-2 rounded truncate" title={selectedCategoryNode ? selectedCategoryNode.name : ''}>
+                  {selectedCategoryNode ? selectedCategoryNode.name : (form.category_id ? `ID ${form.category_id}` : '— select category —')}
+                </div>
+              </div>
+
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => { setCatSelectorOpen(!catSelectorOpen); if (!accountCategories.length) fetchAccountCategories(); }}
+                  className="px-2 py-1 border rounded"
+                >
+                  Choose
+                </button>
+
+                {catSelectorOpen && (
+                  <div className="absolute right-0 mt-2 w-80 bg-white border rounded shadow z-50">
+                    <div className="p-2">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-sm font-medium">Pick category</div>
+                        <button onClick={() => setCatSelectorOpen(false)} className="text-xs px-2">Close</button>
+                      </div>
+
+                      <AccountCategoryPicker
+                        categories={accountCategories}
+                        selectedId={form.category_id ?? undefined}
+                        onSelect={(node) => {
+                          setForm({ ...form, category_id: node.id });
+                          setSelectedCategoryNode(node);
+                          setCatSelectorOpen(false);
+                        }}
+                        width="w-80"
+                        autoFocusSearch={true}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
           <div className="flex gap-2">
             <div className="flex-1">
-              <label className="text-xs font-medium">Category ID</label>
-              <input type="number" className="border p-2 rounded" value={form.category_id ?? ''} onChange={e => setForm({ ...form, category_id: Number(e.target.value) })} />
-            </div>
-            <div className="flex-1">
-              <label className="text-xs font-medium">Parent ID</label>
+              <label className="text-xs font-medium">Parent ID (optional)</label>
               <input type="number" className="border p-2 rounded" value={form.parent_id ?? ''} onChange={e => setForm({ ...form, parent_id: e.target.value === '' ? undefined : Number(e.target.value) })} />
+            </div>
+
+            <div className="flex-1">
+              <label className="text-xs font-medium">Currency</label>
+              <input className="border p-2 rounded" value={form.currency} onChange={e => setForm({ ...form, currency: e.target.value })} />
             </div>
           </div>
 
@@ -206,32 +392,28 @@ export const AccountsPage: React.FC = () => {
               <label className="text-xs font-medium">Balance (minor units)</label>
               <input type="number" className="border p-2 rounded" value={form.balance} onChange={e => setForm({ ...form, balance: Number(e.target.value) })} />
             </div>
-            <div className="w-24">
+            <div className="w-24 min-w-0">
               <label className="text-xs font-medium">Decimals</label>
               <input type="number" className="border p-2 rounded" value={form.balance_decimal} onChange={e => setForm({ ...form, balance_decimal: Number(e.target.value) })} />
             </div>
           </div>
 
+          {/* compact row for type / color / icon (use min-w-0 to avoid overflow) */}
           <div className="flex gap-2 items-end">
-            <div className="flex-1">
-              <label className="text-xs font-medium">Type</label>
-              <input className="border p-2 rounded" value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} />
+            <div className="flex-1 min-w-0">
+              <label className="text-xs font-medium mb-1">Type</label>
+              <input className="border p-2 rounded w-full min-w-0" value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} />
             </div>
 
             <div className="flex flex-col items-center">
-              <label className="text-xs font-medium">Color</label>
+              <label className="text-xs font-medium mb-1">Color</label>
               <input type="color" className="w-12 h-12 p-1 rounded" value={form.color} onChange={e => setForm({ ...form, color: e.target.value })} />
             </div>
 
-            <div className="flex-1">
-              <label className="text-xs font-medium">Icon</label>
-              <input className="border p-2 rounded" value={form.icon} onChange={e => setForm({ ...form, icon: e.target.value })} />
+            <div className="flex-1 min-w-0">
+              <label className="text-xs font-medium mb-1">Icon</label>
+              <input className="border p-2 rounded w-full min-w-0" value={form.icon} onChange={e => setForm({ ...form, icon: e.target.value })} />
             </div>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2"><input type="checkbox" checked={form.virtual} onChange={e => setForm({ ...form, virtual: e.target.checked })} /> Virtual</label>
-            <label className="flex items-center gap-2"><input type="checkbox" checked={form.budget} onChange={e => setForm({ ...form, budget: e.target.checked })} /> Budget</label>
           </div>
 
           <div className="flex justify-end gap-2 mt-2">

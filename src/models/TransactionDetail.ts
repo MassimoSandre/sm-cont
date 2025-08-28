@@ -6,7 +6,7 @@ export interface TransactionDetail {
     amount_decimal: number;
 
     description?: string;
-    note?: string;
+    notes?: string;
     tags?: string;
 
     color: string;

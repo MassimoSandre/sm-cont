@@ -20,7 +20,7 @@ export interface Transaction {
 
   description?: string;
 
-  note?: string;
+  notes?: string;
   tags?: string;
 
   color: string;

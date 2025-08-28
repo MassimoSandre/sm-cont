@@ -45,6 +45,8 @@ export function useAccountsViewModel() {
 
   const addAccount = useCallback(async (payload: Account) => {
     if (!session) throw new Error('Not authenticated');
+
+    // Map fields explicitly and force virtual & budget to false
     const record = {
       user_id: session.user.id,
       category_id: payload.category_id ?? 0,
@@ -54,8 +56,8 @@ export function useAccountsViewModel() {
       type: (payload.type ?? '').trim() || 'other',
       balance: payload.balance ?? 0,
       balance_decimal: payload.balance_decimal ?? 2,
-      virtual: payload.virtual ?? false,
-      budget: payload.budget ?? false,
+      virtual: false, // forced
+      budget: false,  // forced
       currency: payload.currency ?? 'EUR',
       color: payload.color ?? '#000000',
       icon: payload.icon ?? 'mdi:bank',
@@ -77,7 +79,7 @@ export function useAccountsViewModel() {
 
   const updateAccount = useCallback(async (id: number, patch: Account) => {
     if (!session) throw new Error('Not authenticated');
-    // apply only the allowed fields and map explicitly
+
     const update: any = {};
     if (patch.category_id !== undefined) update.category_id = patch.category_id;
     if (patch.parent_id !== undefined) update.parent_id = patch.parent_id;
@@ -86,11 +88,16 @@ export function useAccountsViewModel() {
     if (patch.type !== undefined) update.type = patch.type;
     if (patch.balance !== undefined) update.balance = patch.balance;
     if (patch.balance_decimal !== undefined) update.balance_decimal = patch.balance_decimal;
-    if (patch.virtual !== undefined) update.virtual = patch.virtual;
-    if (patch.budget !== undefined) update.budget = patch.budget;
+    // DO NOT allow updating virtual/budget from this UI — force false
+    // if (patch.virtual !== undefined) update.virtual = patch.virtual; // omitted
+    // if (patch.budget !== undefined) update.budget = patch.budget; // omitted
     if (patch.currency !== undefined) update.currency = patch.currency;
     if (patch.color !== undefined) update.color = patch.color;
     if (patch.icon !== undefined) update.icon = patch.icon;
+
+    // Ensure we always keep virtual/budget false on update (if you want to keep prior DB value, remove next lines)
+    update.virtual = false;
+    update.budget = false;
 
     const { data, error } = await supabase
       .from('accounts')

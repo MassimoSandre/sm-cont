@@ -55,5 +55,5 @@ export function useTransactionsCategoryViewModel() {
     }
 
 
-  return { transactionCategories, addTransactionCategory };
+  return { transactionCategories, fetchCategories, addTransactionCategory, };
 }
