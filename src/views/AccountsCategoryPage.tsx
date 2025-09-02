@@ -1,262 +1,345 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { DndProvider } from 'react-dnd';
+import { HTML5Backend } from 'react-dnd-html5-backend';
+import { Tree } from '@minoru/react-dnd-treeview';
+import type { NodeModel } from '@minoru/react-dnd-treeview';
+
 import { useAccountsCategoryViewModel } from '../viewModels/useAccountsCategoryViewModel';
 import type { AccountCategory } from '../models/AccountCategory';
 
-type CategoryNode = AccountCategory & { children?: CategoryNode[] };
+// AccountsCategoryPage — redesigned to use @minoru/react-dnd-treeview
+// Highlights:
+// - drag & drop to reorganize categories (uses react-dnd Tree)
+// - modern, clean DaisyUI + Tailwind visual style (cards, toolbar, subtle shadows)
+// - accessible buttons, search, expand / collapse all, nice node rendering
+// - when a drop happens we update local tree state and call fetchCategories();
+//   replace the TODO in `persistReorder` to call your viewModel API to persist parent changes.
 
-function buildTree(categories: AccountCategory[]): CategoryNode[] {
-  const map = new Map<number, CategoryNode>();
-  const roots: CategoryNode[] = [];
+type CategoryNode = NodeModel<AccountCategory>;
 
-  categories.forEach(cat => map.set(cat.id, { ...cat, children: [] }));
+const buildTreeNodes = (cats: AccountCategory[] | undefined): CategoryNode[] => {
+  if (!cats) return [];
+  return cats.map(c => ({
+    id: c.id,
+    parent: c.parent_id ?? 0,
+    droppable: true,
+    text: c.name,
+    data: c,
+  }));
+};
 
-  categories.forEach(cat => {
-    if (cat.parent_id) {
-      const parent = map.get(cat.parent_id);
-      if (parent) parent.children?.push(map.get(cat.id)!);
-    } else {
-      roots.push(map.get(cat.id)!);
-    }
-  });
-
-  return roots;
-}
-
-const CategoryCard: React.FC<{
-  cat: CategoryNode;
-  level?: number;
+const CustomNode: React.FC<{
+  node: CategoryNode;
+  depth: number;
+  isOpen: boolean;
+  onToggle: () => void;
+  onSelect: (node: CategoryNode) => void;
   selectedId?: number | null;
-  onSelect: (cat: CategoryNode) => void;
-  onEdit: (cat: CategoryNode) => void;
-  onAddChild: (cat: CategoryNode) => void;
-}> = ({ cat, level = 0, selectedId, onSelect, onEdit, onAddChild }) => {
-  const [expanded, setExpanded] = useState(false);
-  const isSelected = selectedId === cat.id;
+  onEdit: (node: CategoryNode) => void;
+  onAddChild: (node: CategoryNode) => void;
+  onRequestDelete: (node: CategoryNode) => void;
+}> = ({ node, depth, isOpen, onToggle, onSelect, selectedId, onEdit, onAddChild, onRequestDelete }) => {
+  const cat = node.data as AccountCategory;
+  const isSelected = selectedId === node.id;
 
   return (
-    <div style={{ paddingLeft: `${level * 20}px` }} className="mb-2">
-      <div
-        className={`flex items-center gap-2 p-3 rounded-lg shadow cursor-pointer transition hover:bg-gray-100
-          ${level % 2 === 1 ? 'bg-gray-50' : 'bg-white'}
-          ${isSelected ? 'ring-2 ring-blue-400' : ''}`}
-      >
-        {cat.children && cat.children.length > 0 && (
-          <span onClick={() => setExpanded(!expanded)} className="select-none">
-            {expanded ? "▼" : "▶"}
-          </span>
-        )}
-        <div className="flex-1" onClick={() => onSelect(cat)}>
-          <h3 className="font-bold">{cat.name}</h3>
-          <p className="text-sm text-gray-600">{cat.description}</p>
-        </div>
-        <span
-          className="w-6 h-6 rounded-full border"
-          style={{ backgroundColor: cat.color }}
-        />
-        <i className={cat.icon}></i>
+    <div
+      className={`flex items-center gap-3 p-3 rounded-lg transition-shadow ${isSelected ? 'ring-2 ring-primary' : 'shadow-sm'} hover:shadow-md bg-base-100`}
+      style={{ marginLeft: depth * 8 }}
+      onClick={() => onSelect(node)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter') onSelect(node); }}
+    >
+      <div className="flex items-center gap-3">
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggle(); }}
+          className="btn btn-ghost btn-sm p-2"
+          aria-label={isOpen ? 'Collapse' : 'Expand'}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 transform ${isOpen ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
 
-        <div className="flex gap-1 ml-2">
-          <button
-            type="button"
-            className="text-blue-500 hover:text-blue-700"
-            onClick={(e) => { e.stopPropagation(); onEdit(cat); }}
-            title="Edit"
-          >
-            ✏️
-          </button>
-          <button
-            type="button"
-            className="text-green-500 hover:text-green-700"
-            onClick={(e) => { e.stopPropagation(); onAddChild(cat); }}
-            title="Add Subcategory"
-          >
-            ➕
-          </button>
+        <div className="w-10 h-10 rounded-full border flex items-center justify-center" style={{ backgroundColor: cat.color }} aria-hidden />
+
+        <div className="flex flex-col min-w-0">
+          <div className="flex items-center gap-2">
+            <i className={`fa ${cat.icon} fa-fw`} aria-hidden />
+            <div className="font-semibold text-sm truncate">{cat.name}</div>
+            <div className="badge badge-ghost badge-sm ml-2">{cat.type}</div>
+          </div>
+          <div className="text-xs opacity-60 truncate max-w-[32rem]">{cat.description}</div>
         </div>
       </div>
 
-      {expanded && cat.children?.map(child => (
-        <CategoryCard
-          key={child.id}
-          cat={child}
-          level={level + 1}
-          selectedId={selectedId}
-          onSelect={onSelect}
-          onEdit={onEdit}
-          onAddChild={onAddChild}
-        />
-      ))}
+      <div className="ml-auto flex items-center gap-2">
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={(e) => { e.stopPropagation(); onEdit(node); }}
+          title="Edit"
+        >
+          ✏️
+        </button>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={(e) => { e.stopPropagation(); onAddChild(node); }}
+          title="Add Child"
+        >
+          ➕
+        </button>
+        <button
+          className="btn btn-ghost btn-sm text-error"
+          onClick={(e) => { e.stopPropagation(); onRequestDelete(node); }}
+          title="Delete"
+        >
+          🗑️
+        </button>
+      </div>
     </div>
   );
 };
 
 export const AccountsCategoryPage: React.FC = () => {
   const { accountCategories, addAccountCategory, fetchCategories, loading } = useAccountsCategoryViewModel();
-  const [selectedCategory, setSelectedCategory] = useState<AccountCategory | null>(null);
-  const [formData, setFormData] = useState({
-    name: '',
-    description: '',
-    type: '',
-    color: '#000000',
-    icon: 'default-icon',
-    parent_id: undefined as number | undefined,
-  });
 
-  const openForm = (cat?: AccountCategory, isChild = false) => {
-    setSelectedCategory(cat || null);
-    setFormData({
-      name: cat?.name || '',
-      description: cat?.description || '',
-      type: cat?.type || '',
-      color: cat?.color || '#000000',
-      icon: cat?.icon || 'default-icon',
-      parent_id: isChild ? cat?.id : undefined,
-    });
-  };
+  const [treeData, setTreeData] = useState<CategoryNode[]>(() => buildTreeNodes(accountCategories));
+  const [selected, setSelected] = useState<CategoryNode | null>(null);
+  const [filter, setFilter] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<CategoryNode | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  useEffect(() => {
+    // sync when accountCategories from view model change
+    setTreeData(buildTreeNodes(accountCategories));
+  }, [accountCategories]);
+
+  useEffect(() => { fetchCategories(); }, []);
+
+  const onDrop = async (newTree: CategoryNode[]) => {
+    // newTree is the updated flat array with new parent relationships
+    setTreeData(newTree);
+
+    // Persist changes: compare parent_id in your model and call API for changed nodes
+    // NOTE: your viewModel likely needs a method to change parent; if you have it,
+    // replace the TODO below with the actual call. For now we just refresh from backend.
     try {
-      await addAccountCategory(
-        {
-        id: 0, // backend assigns ID
-        parent_id: formData.parent_id,
-        name: formData.name,
-        description: formData.description,
-        type: formData.type,
-        color: formData.color,
-        icon: formData.icon,
-      });
-      // reload tree or you can rely on addAccountCategory to append
+      // TODO: persist reorder/parent updates to backend, e.g.
+      // await updateCategoryParent(nodeId, newParentId)
+      console.debug('New tree after drop:', newTree);
       await fetchCategories();
-      setFormData({
-        name: '',
-        description: '',
-        type: '',
-        color: '#000000',
-        icon: 'default-icon',
-        parent_id: undefined,
-      });
-      setSelectedCategory(null);
     } catch (err) {
-      console.error('Save error', err);
-      //alert('Error saving category: ' + (err as any).message ?? String(err));
+      console.error('Error persisting reorder', err);
     }
   };
 
-  const tree = buildTree(accountCategories);
+  const filteredTree = useMemo(() => {
+    if (!filter.trim()) return treeData;
+    const q = filter.trim().toLowerCase();
+    // show nodes that match name/description or have descendant match
+    const matches = new Set<number>();
+
+    const idToNode = new Map<number, CategoryNode>(treeData.map(n => [n.id, n]));
+
+    const nodeMatches = (n: CategoryNode) => {
+      const cat = n.data as AccountCategory;
+      return cat.name.toLowerCase().includes(q) || (cat.description || '').toLowerCase().includes(q);
+    };
+
+    // first pass: mark direct matches
+    treeData.forEach(n => { if (nodeMatches(n)) matches.add(n.id); });
+
+    // second pass: propagate up (show parents)
+    treeData.forEach(n => {
+      let p = n.parent;
+      while (p && p !== 0) {
+        if (matches.has(n.id)) matches.add(p as number);
+        const parentNode = idToNode.get(p as number);
+        p = parentNode?.parent ?? 0;
+      }
+    });
+
+    return treeData.filter(n => matches.has(n.id));
+  }, [treeData, filter]);
+
+  const handleSelect = (node: CategoryNode) => setSelected(node);
+
+  const openForm = (node?: CategoryNode | null, asChild = false) => {
+    if (!node) {
+      setSelected(null);
+      // open add-new blank form handled by side form when selected === null
+      return;
+    }
+    if (asChild) {
+      // create a temporary new node with parent set
+      setSelected({ ...node, parent: node.id } as CategoryNode);
+    } else {
+      setSelected(node);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    // read form fields from selected?.data or fallback
+    const form = new FormData(e.currentTarget as HTMLFormElement);
+    const name = String(form.get('name') || '');
+    const description = String(form.get('description') || '');
+    const type = String(form.get('type') || '');
+    const color = String(form.get('color') || '#000000');
+    const icon = String(form.get('icon') || 'fa-folder');
+    const parent_id = selected?.parent === 0 || !selected ? undefined : (selected?.parent as number | undefined);
+
+    try {
+      await addAccountCategory({
+        id: 0,
+        parent_id,
+        name,
+        description,
+        type,
+        color,
+        icon,
+      });
+      await fetchCategories();
+      setSelected(null);
+    } catch (err) {
+      console.error('Save error', err);
+    }
+  };
+
+  const onRequestDelete = (node: CategoryNode) => setDeleteTarget(node);
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      // TODO: call your viewModel's delete method here (e.g. await deleteCategory(deleteTarget.id))
+      console.warn('Delete requested for', deleteTarget.id);
+      await fetchCategories();
+    } catch (err) {
+      console.error('Delete error', err);
+    } finally {
+      setDeleteTarget(null);
+    }
+  };
 
   return (
-    <div className="p-4 flex gap-4">
-      {/* TREE */}
-      <div className="flex-1 max-h-screen overflow-auto">
-        {loading ? <div>Loading categories…</div> : (
-          <>
-            {tree.map(root => (
-              <CategoryCard
-                key={root.id}
-                cat={root}
-                selectedId={selectedCategory?.id || null}
-                onSelect={(cat) => setSelectedCategory(cat)}
-                onEdit={(cat) => openForm(cat, false)}
-                onAddChild={(cat) => openForm(cat, true)}
-              />
-            ))}
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-semibold">Categorie conti</h1>
+          <p className="text-sm opacity-60">Organizza le tue categorie con drag & drop. Trascina per spostare, modifica per aggiornare.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <input
+            type="text"
+            placeholder="Cerca categorie..."
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="input input-bordered"
+          />
 
-            <div
-              className="flex items-center justify-center p-4 rounded-lg shadow bg-blue-50 hover:bg-blue-100 cursor-pointer mt-2"
-              onClick={() => openForm(undefined, false)}
-            >
-              <span className="text-2xl font-bold text-green-600">➕ Add Category</span>
-            </div>
-          </>
-        )}
+          <div className="btn-group">
+            <button className="btn btn-outline btn-sm" onClick={() => setTreeData(buildTreeNodes(accountCategories))}>Reset</button>
+            <button className="btn btn-primary btn-sm" onClick={() => setSelected(null)}>Nuova categoria</button>
+          </div>
+        </div>
       </div>
 
-      {/* SIDE FORM */}
-      <div className="w-96 border p-4 rounded-lg shadow bg-white flex-shrink-0">
-        <h3 className="text-lg font-bold mb-4">
-          {selectedCategory ? 'Edit Category / Add Subcategory' : 'Add Category'}
-        </h3>
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div className="flex flex-col">
-            <label className="text-sm font-medium mb-1">Name</label>
-            <input
-              type="text"
-              placeholder="Name"
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              required
-              className="border p-2 rounded"
+      <div className="grid grid-cols-12 gap-6">
+        <div className="col-span-8 bg-base-200 rounded-lg p-4 overflow-auto max-h-[70vh]">
+          <DndProvider backend={HTML5Backend}>
+            <Tree
+              tree={filteredTree}
+              rootId={0}
+              render={(node, { depth, isOpen, onToggle }) => (
+                <CustomNode
+                  key={node.id}
+                  node={node}
+                  depth={depth}
+                  isOpen={isOpen}
+                  onToggle={onToggle}
+                  onSelect={(n) => handleSelect(n)}
+                  selectedId={selected?.id ?? null}
+                  onEdit={(n) => openForm(n, false)}
+                  onAddChild={(n) => openForm(n, true)}
+                  onRequestDelete={(n) => onRequestDelete(n)}
+                />
+              )}
+              dragPreviewRender={(monitorProps) => (
+                <div className="p-2 bg-base-100 rounded shadow">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-full" style={{ backgroundColor: (monitorProps.node?.data as AccountCategory)?.color }} />
+                    <div>{monitorProps.node?.text}</div>
+                  </div>
+                </div>
+              )}
+              onDrop={onDrop}
             />
-          </div>
+          </DndProvider>
+        </div>
 
-          <div className="flex flex-col">
-            <label className="text-sm font-medium mb-1">Description</label>
-            <input
-              type="text"
-              placeholder="Description"
-              value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              className="border p-2 rounded"
-            />
-          </div>
+        <aside className="col-span-4">
+          <div className="card bg-base-100 shadow-sm">
+            <div className="card-body">
+              <h3 className="card-title">{selected ? 'Modifica categoria' : 'Aggiungi categoria'}</h3>
 
-          <div className="flex gap-2 items-end">
-            <div className="flex-1 flex flex-col">
-              <label className="text-sm font-medium mb-1">Type</label>
-              <input
-                type="text"
-                value={formData.type}
-                onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-                required
-                className="border p-2 rounded w-full"
-              />
-            </div>
-            <div className="flex flex-col items-center">
-              <label className="text-sm font-medium mb-1">Color</label>
-              <input
-                type="color"
-                value={formData.color}
-                onChange={(e) => setFormData({ ...formData, color: e.target.value })}
-                className="w-12 h-12 p-1 rounded cursor-pointer"
-              />
-            </div>
-            <div className="flex-1 flex flex-col">
-              <label className="text-sm font-medium mb-1">Icon</label>
-              <input
-                type="text"
-                value={formData.icon}
-                onChange={(e) => setFormData({ ...formData, icon: e.target.value })}
-                className="border p-2 rounded w-full"
-              />
+              <form onSubmit={handleSubmit} className="flex flex-col gap-3" aria-labelledby="category-form">
+                <input name="name" defaultValue={selected?.data?.name ?? ''} placeholder="Nome" className="input input-bordered" required />
+                <input name="description" defaultValue={selected?.data?.description ?? ''} placeholder="Descrizione" className="input input-bordered" />
+
+                <div className="flex gap-2">
+                  <input name="type" defaultValue={selected?.data?.type ?? ''} placeholder="Tipo" className="input input-bordered flex-1" />
+                  <input name="color" type="color" defaultValue={selected?.data?.color ?? '#000000'} className="w-12 h-12 p-1 rounded" />
+                  <input name="icon" defaultValue={selected?.data?.icon ?? 'fa-folder'} placeholder="Icon (FontAwesome)" className="input input-bordered flex-1" />
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  <button type="button" className="btn btn-ghost" onClick={() => setSelected(null)}>Annulla</button>
+                  <button type="submit" className="btn btn-primary">Salva</button>
+                </div>
+              </form>
+
+              <div className="mt-4">
+                <h4 className="text-sm font-medium">Selezione</h4>
+                <div className="text-xs opacity-60">Selezionato: {selected ? (selected.data as AccountCategory).name : 'Nessuno'}</div>
+              </div>
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 mt-2">
-            <button
-              type="button"
-              onClick={() => setFormData({
-                name: '',
-                description: '',
-                type: '',
-                color: '#000000',
-                icon: 'default-icon',
-                parent_id: undefined
-              })}
-              className="py-2 px-4 rounded border"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="bg-blue-500 text-white py-2 px-4 rounded hover:bg-blue-600"
-            >
-              Save
-            </button>
+          <div className="mt-4 space-y-3">
+            <div className="card p-3">
+              <div className="text-sm font-medium mb-2">Snippet</div>
+              <div className="text-xs opacity-60">Qui puoi mettere widget, statistiche o quick actions.</div>
+            </div>
+
+            <div className="card p-3">
+              <fieldset>
+                <legend className="font-medium mb-2">Tema (DaisyUI)</legend>
+                <div className="flex flex-col gap-2">
+                  {['light','dark','synthwave','valentine','retro'].map(t => (
+                    <label className="flex items-center gap-2" key={t}>
+                      <input type="radio" name="theme-radios" className="radio radio-sm theme-controller" value={t} />
+                      <span className="capitalize">{t}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            </div>
           </div>
-        </form>
+        </aside>
       </div>
+
+      {/* delete modal */}
+      {deleteTarget && (
+        <div className="modal modal-open">
+          <div className="modal-box">
+            <h3 className="font-bold text-lg">Eliminare categoria?</h3>
+            <p className="py-4">Sei sicuro di voler eliminare <strong>{deleteTarget.data.name}</strong>? Questa azione è irreversibile.</p>
+            <div className="modal-action">
+              <button className="btn" onClick={() => setDeleteTarget(null)}>Annulla</button>
+              <button className="btn btn-error" onClick={confirmDelete}>Elimina</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
