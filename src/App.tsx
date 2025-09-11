@@ -6,6 +6,9 @@ import TransactionsCategoryPage from './views/TransactionsCategoryPage';
 import AccountsPage from './views/AccountsPage';
 import AccountsCategoryPage from './views/AccountsCategoryPage';
 
+import '@fortawesome/fontawesome-free/css/all.min.css';
+
+
 /*{ to: '/transactions',         label: 'Transactions' },
     { to: '/transactions_categories',label: 'Transaction Categories' },
     { to: '/accounts', label: 'Accounts' },

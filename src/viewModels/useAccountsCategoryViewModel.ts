@@ -70,10 +70,52 @@ export function useAccountsCategoryViewModel() {
     return data?.[0] ?? null;
   }, [session]);
 
+  const updateAccountCategory = useCallback(async (id: number, updates: AccountCategory) => {
+    if (!session) throw new Error('Not authenticated');
+    // explicit mapping => do not rely on model field names matching DB columns
+    const record: any = {
+      parent_id: updates.parent_id ?? null,
+      name: (updates.name ?? '').trim(),
+      description: updates.description ?? null,
+      type: (updates.type ?? '').trim() || 'other',
+      color: updates.color ?? '#000000',
+      icon: updates.icon ?? 'mdi:bank',
+    };
+    const { data, error } = await supabase
+      .from('accounts_categories')
+      .update(record)
+      .eq('id', id)
+      .select();
+    if (error) {
+      console.error('Update error', error);
+      throw error;
+    } 
+    // update row in state
+    setAccountCategories(prev => prev.map(cat => (cat.id === id ? { ...cat, ...(data?.[0] ?? {}) } : cat)));
+    return data?.[0] ?? null;
+  }, [session]);
+
+  const deleteAccountCategory = useCallback(async (id: number) => { 
+    if (!session) throw new Error('Not authenticated');
+    const { error } = await supabase
+      .from('accounts_categories')  
+      .delete()
+      .eq('id', id);
+    if (error) {
+      console.error('Delete error', error);
+      throw error;
+    } 
+    // remove row from state
+    setAccountCategories(prev => prev.filter(cat => cat.id !== id));
+  }, [session]);
+
+
   return {
     accountCategories,
     addAccountCategory,
     fetchCategories,
+    updateAccountCategory,
+    deleteAccountCategory,
     loading,
     error,
   };

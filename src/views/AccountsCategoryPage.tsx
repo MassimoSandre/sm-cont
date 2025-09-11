@@ -7,6 +7,15 @@ import type { NodeModel } from '@minoru/react-dnd-treeview';
 import { useAccountsCategoryViewModel } from '../viewModels/useAccountsCategoryViewModel';
 import type { AccountCategory } from '../models/AccountCategory';
 
+import { Pencil,Plus,Trash } from 'phosphor-react';
+
+const ICONS = [
+  'fa-folder', 'fa-folder-open', 'fa-user', 'fa-users', 'fa-tags', 'fa-tag',
+  'fa-dollar-sign', 'fa-wallet', 'fa-credit-card', 'fa-shopping-cart',
+  'fa-cog', 'fa-bell', 'fa-star', 'fa-heart', 'fa-calendar', 'fa-clock',
+  'fa-search', 'fa-chart-line', 'fa-home', 'fa-briefcase'
+];
+
 // AccountsCategoryPage — redesigned to use @minoru/react-dnd-treeview
 // Highlights:
 // - drag & drop to reorganize categories (uses react-dnd Tree)
@@ -45,7 +54,7 @@ const CustomNode: React.FC<{
   return (
     <div
       className={`flex items-center gap-3 p-3 rounded-lg transition-shadow ${isSelected ? 'ring-2 ring-primary' : 'shadow-sm'} hover:shadow-md bg-base-100`}
-      style={{ marginLeft: depth * 8 }}
+      style={{ marginLeft: depth * 32, marginTop: 4 }}
       onClick={() => onSelect(node)}
       role="button"
       tabIndex={0}
@@ -80,21 +89,21 @@ const CustomNode: React.FC<{
           onClick={(e) => { e.stopPropagation(); onEdit(node); }}
           title="Edit"
         >
-          ✏️
+          <Pencil size={32} weight="regular" className="text-base-content" />
         </button>
         <button
           className="btn btn-ghost btn-sm"
           onClick={(e) => { e.stopPropagation(); onAddChild(node); }}
           title="Add Child"
         >
-          ➕
+          <Plus size={32} weight="regular" className="text-base-content" />
         </button>
         <button
           className="btn btn-ghost btn-sm text-error"
           onClick={(e) => { e.stopPropagation(); onRequestDelete(node); }}
           title="Delete"
         >
-          🗑️
+          <Trash size={32} weight="regular" className="text-base-content" />
         </button>
       </div>
     </div>
@@ -102,12 +111,19 @@ const CustomNode: React.FC<{
 };
 
 export const AccountsCategoryPage: React.FC = () => {
-  const { accountCategories, addAccountCategory, fetchCategories, loading } = useAccountsCategoryViewModel();
+  const { accountCategories, addAccountCategory, fetchCategories, updateAccountCategory, deleteAccountCategory, loading } = useAccountsCategoryViewModel();
 
   const [treeData, setTreeData] = useState<CategoryNode[]>(() => buildTreeNodes(accountCategories));
   const [selected, setSelected] = useState<CategoryNode | null>(null);
+  const [editing, setEditing] = useState(false);
   const [filter, setFilter] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<CategoryNode | null>(null);
+
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [iconSearch, setIconSearch] = useState('');
+  const [formIcon, setFormIcon] = useState(ICONS[0]);
+
+  useEffect(() => {setFormIcon(selected?.data?.icon ?? 'fa-folder');}, [selected]);
 
   useEffect(() => {
     // sync when accountCategories from view model change
@@ -116,22 +132,6 @@ export const AccountsCategoryPage: React.FC = () => {
 
   useEffect(() => { fetchCategories(); }, []);
 
-  const onDrop = async (newTree: CategoryNode[]) => {
-    // newTree is the updated flat array with new parent relationships
-    setTreeData(newTree);
-
-    // Persist changes: compare parent_id in your model and call API for changed nodes
-    // NOTE: your viewModel likely needs a method to change parent; if you have it,
-    // replace the TODO below with the actual call. For now we just refresh from backend.
-    try {
-      // TODO: persist reorder/parent updates to backend, e.g.
-      // await updateCategoryParent(nodeId, newParentId)
-      console.debug('New tree after drop:', newTree);
-      await fetchCategories();
-    } catch (err) {
-      console.error('Error persisting reorder', err);
-    }
-  };
 
   const filteredTree = useMemo(() => {
     if (!filter.trim()) return treeData;
@@ -147,6 +147,7 @@ export const AccountsCategoryPage: React.FC = () => {
     };
 
     // first pass: mark direct matches
+
     treeData.forEach(n => { if (nodeMatches(n)) matches.add(n.id); });
 
     // second pass: propagate up (show parents)
@@ -165,6 +166,7 @@ export const AccountsCategoryPage: React.FC = () => {
   const handleSelect = (node: CategoryNode) => setSelected(node);
 
   const openForm = (node?: CategoryNode | null, asChild = false) => {
+    setEditing(asChild ? false : true);
     if (!node) {
       setSelected(null);
       // open add-new blank form handled by side form when selected === null
@@ -186,9 +188,38 @@ export const AccountsCategoryPage: React.FC = () => {
     const description = String(form.get('description') || '');
     const type = String(form.get('type') || '');
     const color = String(form.get('color') || '#000000');
-    const icon = String(form.get('icon') || 'fa-folder');
+    const icon = String(formIcon || 'fa-folder');
     const parent_id = selected?.parent === 0 || !selected ? undefined : (selected?.parent as number | undefined);
 
+
+    if (editing) {
+      // editing existing
+      if (!selected?.id) { 
+        console.error('Selected node has no ID'); 
+        return;
+      }
+      try {
+        await updateAccountCategory(selected.id as number, {
+          id: selected.id as number,
+          parent_id,  
+          name,
+          description,
+          type,
+          color,
+          icon,
+        });
+        await fetchCategories();
+        setSelected(null);
+      }
+      catch (err) {
+        console.error('Update error', err);
+      }
+
+      setEditing(false);
+      return;
+    }
+    // adding new
+    
     try {
       await addAccountCategory({
         id: 0,
@@ -210,8 +241,7 @@ export const AccountsCategoryPage: React.FC = () => {
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     try {
-      // TODO: call your viewModel's delete method here (e.g. await deleteCategory(deleteTarget.id))
-      console.warn('Delete requested for', deleteTarget.id);
+      await deleteAccountCategory(deleteTarget.id as number);
       await fetchCategories();
     } catch (err) {
       console.error('Delete error', err);
@@ -225,7 +255,6 @@ export const AccountsCategoryPage: React.FC = () => {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold">Categorie conti</h1>
-          <p className="text-sm opacity-60">Organizza le tue categorie con drag & drop. Trascina per spostare, modifica per aggiornare.</p>
         </div>
         <div className="flex items-center gap-3">
           <input
@@ -263,6 +292,8 @@ export const AccountsCategoryPage: React.FC = () => {
                   onRequestDelete={(n) => onRequestDelete(n)}
                 />
               )}
+              canDrag={() => false}
+              canDrop={() => false}
               dragPreviewRender={(monitorProps) => (
                 <div className="p-2 bg-base-100 rounded shadow">
                   <div className="flex items-center gap-2">
@@ -271,7 +302,7 @@ export const AccountsCategoryPage: React.FC = () => {
                   </div>
                 </div>
               )}
-              onDrop={onDrop}
+              onDrop={() => {} }
             />
           </DndProvider>
         </div>
@@ -288,7 +319,19 @@ export const AccountsCategoryPage: React.FC = () => {
                 <div className="flex gap-2">
                   <input name="type" defaultValue={selected?.data?.type ?? ''} placeholder="Tipo" className="input input-bordered flex-1" />
                   <input name="color" type="color" defaultValue={selected?.data?.color ?? '#000000'} className="w-12 h-12 p-1 rounded" />
-                  <input name="icon" defaultValue={selected?.data?.icon ?? 'fa-folder'} placeholder="Icon (FontAwesome)" className="input input-bordered flex-1" />
+                  
+                  {/*<input name="icon" value={icon} onChange={(e) => setIcon(e.target.value)} className="input input-bordered" />*/}
+                  <div className="flex items-center gap-2">
+                    
+                    <button type="button" className="btn btn-ghost" onClick={() => setPickerOpen(true)} aria-haspopup="dialog" aria-expanded={pickerOpen}>
+                      Scegli icona
+                      <span className="ml-2" aria-hidden>
+                      <i className={`fa ${formIcon} fa-fw`} />
+                    </span>
+                    </button>
+                    
+                  </div>
+                
                 </div>
 
                 <div className="flex justify-end gap-2">
@@ -297,6 +340,50 @@ export const AccountsCategoryPage: React.FC = () => {
                 </div>
               </form>
 
+
+              {pickerOpen && (
+                <div className="modal modal-open">
+                  <div className="modal-box max-w-3xl">
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="font-medium">Seleziona icona</h3>
+                      <button className="btn btn-ghost btn-sm" onClick={() => setPickerOpen(false)}>Chiudi</button>
+                    </div>
+
+                    <div className="mb-3">
+                      <input
+                        type="text"
+                        placeholder="Cerca icone..."
+                        value={iconSearch}
+                        onChange={(e) => setIconSearch(e.target.value)}
+                        className="input input-sm input-bordered w-full"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-6 gap-2 max-h-60 overflow-auto">
+                      {ICONS
+                        .filter(ic => !iconSearch || ic.toLowerCase().includes(iconSearch.toLowerCase()))
+                        .map(ic => (
+                          <button
+                            key={ic}
+                            type="button"
+                            className={`p-2 rounded hover:bg-base-200 focus:outline-none flex flex-col items-center justify-center`}
+                            onClick={() => { setFormIcon(ic); setPickerOpen(false); }}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setFormIcon(ic); setPickerOpen(false); } }}
+                            aria-label={`Seleziona icona ${ic}`}
+                          >
+                            <div className="w-10 h-10 flex items-center justify-center">
+                              <i className={`fa ${(ic)} fa-xl`} aria-hidden />
+                            </div>
+                            <div className="text-xs mt-1 truncate">{ic.replace('fa-','')}</div>
+                          </button>
+                        ))
+                      }
+                    </div>
+                  </div>
+                </div>
+              )}
+
+
               <div className="mt-4">
                 <h4 className="text-sm font-medium">Selezione</h4>
                 <div className="text-xs opacity-60">Selezionato: {selected ? (selected.data as AccountCategory).name : 'Nessuno'}</div>
@@ -304,26 +391,7 @@ export const AccountsCategoryPage: React.FC = () => {
             </div>
           </div>
 
-          <div className="mt-4 space-y-3">
-            <div className="card p-3">
-              <div className="text-sm font-medium mb-2">Snippet</div>
-              <div className="text-xs opacity-60">Qui puoi mettere widget, statistiche o quick actions.</div>
-            </div>
-
-            <div className="card p-3">
-              <fieldset>
-                <legend className="font-medium mb-2">Tema (DaisyUI)</legend>
-                <div className="flex flex-col gap-2">
-                  {['light','dark','synthwave','valentine','retro'].map(t => (
-                    <label className="flex items-center gap-2" key={t}>
-                      <input type="radio" name="theme-radios" className="radio radio-sm theme-controller" value={t} />
-                      <span className="capitalize">{t}</span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-            </div>
-          </div>
+          
         </aside>
       </div>
 
