@@ -1,11 +1,4 @@
-export interface TransactionCategory {
-    id: number;
-    parent_id?: number;
+import type { Category } from './Category';
+export interface TransactionCategory extends Category {
 
-    name: string;
-    description?: string;
-    type: string;
-
-    color: string;
-    icon: string;
 }

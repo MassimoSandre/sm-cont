@@ -1,12 +1,4 @@
-export interface AccountCategory {
-    id : number;
-    parent_id?: number;
+import type { Category } from './Category';
+export interface AccountCategory extends Category {
 
-    name: string;
-    description?: string;
-
-    type: string;
-
-    color: string;
-    icon: string;
 }

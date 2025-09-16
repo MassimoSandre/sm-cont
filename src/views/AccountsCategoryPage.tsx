@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { use, useEffect, useMemo, useState } from 'react';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { Tree } from '@minoru/react-dnd-treeview';
@@ -9,20 +9,15 @@ import type { AccountCategory } from '../models/AccountCategory';
 
 import { Pencil,Plus,Trash } from 'phosphor-react';
 
+import CategorySelector from '../components/CategorySelector';
+
+
 const ICONS = [
   'fa-folder', 'fa-folder-open', 'fa-user', 'fa-users', 'fa-tags', 'fa-tag',
   'fa-dollar-sign', 'fa-wallet', 'fa-credit-card', 'fa-shopping-cart',
   'fa-cog', 'fa-bell', 'fa-star', 'fa-heart', 'fa-calendar', 'fa-clock',
   'fa-search', 'fa-chart-line', 'fa-home', 'fa-briefcase'
 ];
-
-// AccountsCategoryPage — redesigned to use @minoru/react-dnd-treeview
-// Highlights:
-// - drag & drop to reorganize categories (uses react-dnd Tree)
-// - modern, clean DaisyUI + Tailwind visual style (cards, toolbar, subtle shadows)
-// - accessible buttons, search, expand / collapse all, nice node rendering
-// - when a drop happens we update local tree state and call fetchCategories();
-//   replace the TODO in `persistReorder` to call your viewModel API to persist parent changes.
 
 type CategoryNode = NodeModel<AccountCategory>;
 
@@ -116,6 +111,7 @@ export const AccountsCategoryPage: React.FC = () => {
   const [treeData, setTreeData] = useState<CategoryNode[]>(() => buildTreeNodes(accountCategories));
   const [selected, setSelected] = useState<CategoryNode | null>(null);
   const [editing, setEditing] = useState(false);
+  const [inserting, setInserting] = useState(false);
   const [filter, setFilter] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<CategoryNode | null>(null);
 
@@ -123,10 +119,15 @@ export const AccountsCategoryPage: React.FC = () => {
   const [iconSearch, setIconSearch] = useState('');
   const [formIcon, setFormIcon] = useState(ICONS[0]);
 
+  const [parentId, setParentId] = useState<number | null>(null);
+  useEffect(() => {
+    setParentId(selected?.parent && selected.parent !== 0 ? (selected.parent as number) : null);
+  }, [selected, editing, inserting]);
+
+
   useEffect(() => {setFormIcon(selected?.data?.icon ?? 'fa-folder');}, [selected]);
 
   useEffect(() => {
-    // sync when accountCategories from view model change
     setTreeData(buildTreeNodes(accountCategories));
   }, [accountCategories]);
 
@@ -136,44 +137,41 @@ export const AccountsCategoryPage: React.FC = () => {
   const filteredTree = useMemo(() => {
     if (!filter.trim()) return treeData;
     const q = filter.trim().toLowerCase();
-    // show nodes that match name/description or have descendant match
     const matches = new Set<number>();
-
-    const idToNode = new Map<number, CategoryNode>(treeData.map(n => [n.id, n]));
+    const idToNode = new Map<number, CategoryNode>(treeData.map(n => [Number(n.id), n]));
 
     const nodeMatches = (n: CategoryNode) => {
       const cat = n.data as AccountCategory;
       return cat.name.toLowerCase().includes(q) || (cat.description || '').toLowerCase().includes(q);
     };
 
-    // first pass: mark direct matches
+    treeData.forEach(n => { if (nodeMatches(n)) matches.add(Number(n.id)); });
 
-    treeData.forEach(n => { if (nodeMatches(n)) matches.add(n.id); });
-
-    // second pass: propagate up (show parents)
     treeData.forEach(n => {
       let p = n.parent;
       while (p && p !== 0) {
-        if (matches.has(n.id)) matches.add(p as number);
+        if (matches.has(Number(n.id))) matches.add(p as number);
         const parentNode = idToNode.get(p as number);
         p = parentNode?.parent ?? 0;
       }
     });
 
-    return treeData.filter(n => matches.has(n.id));
+    return treeData.filter(n => matches.has(Number(n.id)));
   }, [treeData, filter]);
 
-  const handleSelect = (node: CategoryNode) => setSelected(node);
+  const handleSelect = (node: CategoryNode) => {
+    
+    if(!editing && !inserting) setSelected(node);
+  };
 
   const openForm = (node?: CategoryNode | null, asChild = false) => {
     setEditing(asChild ? false : true);
+    setInserting(asChild ? true : false);
     if (!node) {
       setSelected(null);
-      // open add-new blank form handled by side form when selected === null
       return;
     }
     if (asChild) {
-      // create a temporary new node with parent set
       setSelected({ ...node, parent: node.id } as CategoryNode);
     } else {
       setSelected(node);
@@ -182,18 +180,17 @@ export const AccountsCategoryPage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    // read form fields from selected?.data or fallback
     const form = new FormData(e.currentTarget as HTMLFormElement);
     const name = String(form.get('name') || '');
     const description = String(form.get('description') || '');
     const type = String(form.get('type') || '');
     const color = String(form.get('color') || '#000000');
     const icon = String(formIcon || 'fa-folder');
-    const parent_id = selected?.parent === 0 || !selected ? undefined : (selected?.parent as number | undefined);
+    //const parent_id = selected?.parent === 0 || !selected ? undefined : (selected?.parent as number | undefined);
+    const parent_id = parentId === null ? undefined : parentId;
 
 
     if (editing) {
-      // editing existing
       if (!selected?.id) { 
         console.error('Selected node has no ID'); 
         return;
@@ -218,8 +215,7 @@ export const AccountsCategoryPage: React.FC = () => {
       setEditing(false);
       return;
     }
-    // adding new
-    
+
     try {
       await addAccountCategory({
         id: 0,
@@ -235,11 +231,13 @@ export const AccountsCategoryPage: React.FC = () => {
     } catch (err) {
       console.error('Save error', err);
     }
+    setInserting(false);
   };
 
   const onRequestDelete = (node: CategoryNode) => setDeleteTarget(node);
   const confirmDelete = async () => {
     if (!deleteTarget) return;
+    if (selected && (selected.id === deleteTarget.id || selected.parent === deleteTarget.id)) {setSelected(null); setEditing(false); setInserting(false);}
     try {
       await deleteAccountCategory(deleteTarget.id as number);
       await fetchCategories();
@@ -251,94 +249,208 @@ export const AccountsCategoryPage: React.FC = () => {
   };
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
+    // NOTE: added max-w/full, min-w-0 and flex-1 to defend against ancestor flex/containers
+    <div className="p-6 w-full max-w-full min-w-0 flex-1">
+      <div className="flex items-center justify-between w-full">
         <div>
-          <h1 className="text-2xl font-semibold">Categorie conti</h1>
+          <h1 className="text-2xl font-semibold">Account Categories</h1>
         </div>
-        <div className="flex items-center gap-3">
-          <input
-            type="text"
-            placeholder="Cerca categorie..."
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="input input-bordered"
-          />
 
-          <div className="btn-group">
-            <button className="btn btn-outline btn-sm" onClick={() => setTreeData(buildTreeNodes(accountCategories))}>Reset</button>
-            <button className="btn btn-primary btn-sm" onClick={() => setSelected(null)}>Nuova categoria</button>
+        <div className="flex items-center gap-3 min-w-0">
+          {/* rendiamo l'input un flex item che può ridursi */}
+          <div className="flex-1 min-w-0">
+            <input
+              type="text"
+              placeholder="Search Categories..."
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              className="input input-bordered w-full"
+            />
+          </div>
+
+          <div className="join flex-shrink-0">
+            <button className="btn btn-sm join-item" onClick={() => setTreeData(buildTreeNodes(accountCategories))}>Reset</button>
+            <button className="btn btn-primary btn-sm join-item" onClick={() => {setSelected(null); setInserting(true); setEditing(false);} }>New category</button>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-12 gap-6">
-        <div className="col-span-8 bg-base-200 rounded-lg p-4 overflow-auto max-h-[70vh]">
-          <DndProvider backend={HTML5Backend}>
-            <Tree
-              tree={filteredTree}
-              rootId={0}
-              render={(node, { depth, isOpen, onToggle }) => (
-                <CustomNode
-                  key={node.id}
-                  node={node}
-                  depth={depth}
-                  isOpen={isOpen}
-                  onToggle={onToggle}
-                  onSelect={(n) => handleSelect(n)}
-                  selectedId={selected?.id ?? null}
-                  onEdit={(n) => openForm(n, false)}
-                  onAddChild={(n) => openForm(n, true)}
-                  onRequestDelete={(n) => onRequestDelete(n)}
-                />
-              )}
-              canDrag={() => false}
-              canDrop={() => false}
-              dragPreviewRender={(monitorProps) => (
-                <div className="p-2 bg-base-100 rounded shadow">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full" style={{ backgroundColor: (monitorProps.node?.data as AccountCategory)?.color }} />
-                    <div>{monitorProps.node?.text}</div>
-                  </div>
-                </div>
-              )}
-              onDrop={() => {} }
-            />
-          </DndProvider>
+      {/* grid: forced full width and min-w-0 */}
+      <div className="grid grid-cols-12 gap-6 w-full max-w-full min-w-0">
+        {/* left panel: conditional span, forced w/full + min-w-0 + wrapper for Tree */}
+        <div className={`${(inserting || editing) ? 'col-span-8' : 'col-span-12'} bg-base-200 rounded-lg p-4 overflow-auto max-h-[70vh] w-full min-w-0`}>
+          <div className="w-full min-w-0">
+            <DndProvider backend={HTML5Backend}>
+              <Tree
+                tree={filteredTree}
+                rootId={0}
+                render={(node, { depth, isOpen, onToggle }) => (
+                  <CustomNode
+                    key={node.id}
+                    node={node}
+                    depth={depth}
+                    isOpen={isOpen}
+                    onToggle={onToggle}
+                    onSelect={(n) => handleSelect(n)}
+                    selectedId={Number(selected?.id) ?? null}
+                    onEdit={(n) => openForm(n, false)}
+                    onAddChild={(n) => openForm(n, true)}
+                    onRequestDelete={(n) => onRequestDelete(n)}
+                  />
+                )}
+                canDrag={() => false}
+                canDrop={() => false}
+                dragPreviewRender={(monitorProps) => (
+                  <div className="p-2 bg-white rounded shadow-lg border">{monitorProps.item.text}</div>
+                )}
+                onDrop={() => {} }
+              />
+            </DndProvider>
+          </div>
         </div>
 
+        {(inserting || editing) &&(
         <aside className="col-span-4">
           <div className="card bg-base-100 shadow-sm">
             <div className="card-body">
-              <h3 className="card-title">{selected ? 'Modifica categoria' : 'Aggiungi categoria'}</h3>
+                <h3 className="card-title">{editing ? 'Edit category' : 'Insert new category'}</h3>
+                  <form onSubmit={handleSubmit} className="flex flex-col gap-4" aria-labelledby="category-form">
+                    {/* Parent selector */}
+                    <div className="form-control">
+                      <label className="label">
+                        <span id="parent-label" className="label-text text-xs opacity-60">Parent category</span>
+                      </label>
+                      <CategorySelector
+                        categories={accountCategories}
+                        value={parentId}
+                        onChange={(id) => setParentId(id)}
+                        placeholder="No parent"
+                        prohibitedIds={editing ? [selected?.id as number] : []}
+                        className="w-full"
+                        aria-labelledby="parent-label"
+                      />
+                      <label className="label">
+                        <span className="label-text-alt text-xs opacity-50">Lascia vuoto per creare una categoria di primo livello</span>
+                      </label>
+                    </div>
 
-              <form onSubmit={handleSubmit} className="flex flex-col gap-3" aria-labelledby="category-form">
-                <input name="name" defaultValue={selected?.data?.name ?? ''} placeholder="Nome" className="input input-bordered" required />
-                <input name="description" defaultValue={selected?.data?.description ?? ''} placeholder="Descrizione" className="input input-bordered" />
+                    {/* Nome + Tipo */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="form-control">
+                        <label className="label">
+                          <span className="label-text text-xs opacity-60">Nome</span>
+                        </label>
+                        <input
+                          name="name"
+                          defaultValue={selected?.data?.name ?? ''}
+                          placeholder="Nome"
+                          className="input input-bordered input-sm"
+                          required
+                          maxLength={80}
+                          aria-required="true"
+                        />
+                      </div>
 
-                <div className="flex gap-2">
-                  <input name="type" defaultValue={selected?.data?.type ?? ''} placeholder="Tipo" className="input input-bordered flex-1" />
-                  <input name="color" type="color" defaultValue={selected?.data?.color ?? '#000000'} className="w-12 h-12 p-1 rounded" />
-                  
-                  {/*<input name="icon" value={icon} onChange={(e) => setIcon(e.target.value)} className="input input-bordered" />*/}
-                  <div className="flex items-center gap-2">
-                    
-                    <button type="button" className="btn btn-ghost" onClick={() => setPickerOpen(true)} aria-haspopup="dialog" aria-expanded={pickerOpen}>
-                      Scegli icona
-                      <span className="ml-2" aria-hidden>
-                      <i className={`fa ${formIcon} fa-fw`} />
-                    </span>
-                    </button>
-                    
-                  </div>
-                
-                </div>
+                      <div className="form-control">
+                        <label className="label">
+                          <span className="label-text text-xs opacity-60">Tipo</span>
+                        </label>
+                        <input
+                          name="type"
+                          defaultValue={selected?.data?.type ?? ''}
+                          placeholder="Tipo (es. spesa, entrata)"
+                          className="input input-bordered input-sm"
+                        />
+                        <label className="label">
+                          <span className="label-text-alt text-xs opacity-50">Campo libero per raggruppamenti</span>
+                        </label>
+                      </div>
+                    </div>
 
-                <div className="flex justify-end gap-2">
-                  <button type="button" className="btn btn-ghost" onClick={() => setSelected(null)}>Annulla</button>
-                  <button type="submit" className="btn btn-primary">Salva</button>
-                </div>
-              </form>
+                    {/* Description (full width) */}
+                    <div className="form-control">
+                      <label className="label">
+                        <span className="label-text text-xs opacity-60">Descrizione</span>
+                      </label>
+                      <input
+                        name="description"
+                        defaultValue={selected?.data?.description ?? ''}
+                        placeholder="Breve descrizione"
+                        className="input input-bordered input-sm"
+                      />
+                      <label className="label">
+                        <span className="label-text-alt text-xs opacity-50">Massimo 200 caratteri (consigliato)</span>
+                      </label>
+                    </div>
+
+                    {/* Color + Icon picker on a single row */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
+                      <div className="form-control">
+                        <label className="label">
+                          <span className="label-text text-xs opacity-60">Colore</span>
+                        </label>
+                        <input
+                          name="color"
+                          type="color"
+                          defaultValue={selected?.data?.color ?? '#000000'}
+                          className="w-16 h-10 p-1 rounded input-sm"
+                          aria-label="Scegli colore categoria"
+                        />
+                      </div>
+
+                      <div className="form-control col-span-2">
+                        <label className="label">
+                          <span className="label-text text-xs opacity-60">Icona</span>
+                        </label>
+
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm px-3"
+                            onClick={() => setPickerOpen(true)}
+                            aria-haspopup="dialog"
+                            aria-expanded={pickerOpen}
+                          >
+                            <span className="mr-2">Scegli icona</span>
+                            <i className={`fa ${formIcon} fa-fw`} aria-hidden />
+                          </button>
+
+                          {/* preview */}
+                          <div className="flex items-center gap-2 ml-2">
+                            <div
+                              className="w-8 h-8 rounded-full border flex items-center justify-center"
+                              style={{ backgroundColor: selected?.data?.color ?? (formIcon ? '#000000' : '#ffffff') }}
+                              aria-hidden
+                              title="Preview colore"
+                            />
+                            <div className="text-sm truncate">
+                              <i className={`fa ${formIcon} fa-lg`} aria-hidden />
+                            </div>
+                          </div>
+
+                          {/* opzionale: show current icon name */}
+                          <div className="text-xs opacity-60 ml-auto">{formIcon.replace('fa-', '')}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Action buttons */}
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => { setSelected(null); setEditing(false); setInserting(false); }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="btn btn-primary btn-sm"
+                      >
+                        {editing ? 'Save' : 'Insert'}
+                      </button>
+                    </div>
+                  </form>
 
 
               {pickerOpen && (
@@ -383,27 +495,23 @@ export const AccountsCategoryPage: React.FC = () => {
                 </div>
               )}
 
-
               <div className="mt-4">
-                <h4 className="text-sm font-medium">Selezione</h4>
-                <div className="text-xs opacity-60">Selezionato: {selected ? (selected.data as AccountCategory).name : 'Nessuno'}</div>
+                <h4 className="text-sm font-medium">Selection</h4>
+                <div className="text-xs opacity-60">Selected: {selected ? (selected.data as AccountCategory).name : 'Nessuno'}</div>
               </div>
             </div>
           </div>
-
-          
-        </aside>
+        </aside>)}
       </div>
 
-      {/* delete modal */}
       {deleteTarget && (
         <div className="modal modal-open">
           <div className="modal-box">
-            <h3 className="font-bold text-lg">Eliminare categoria?</h3>
-            <p className="py-4">Sei sicuro di voler eliminare <strong>{deleteTarget.data.name}</strong>? Questa azione è irreversibile.</p>
+            <h3 className="font-bold text-lg">Delete Category?</h3>
+            <p className="py-4">Are you sure that you want to delete category <strong>{deleteTarget?.data?.name}</strong>? This action cannot be undone.</p>
             <div className="modal-action">
-              <button className="btn" onClick={() => setDeleteTarget(null)}>Annulla</button>
-              <button className="btn btn-error" onClick={confirmDelete}>Elimina</button>
+              <button className="btn" onClick={() => setDeleteTarget(null)}>Cancel</button>
+              <button className="btn btn-error" onClick={confirmDelete}>Delete</button>
             </div>
           </div>
         </div>

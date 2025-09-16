@@ -1,26 +1,43 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Plus, Pencil, Trash } from 'phosphor-react';
+
 import { useTransactionsViewModel } from '../viewModels/useTransactionsViewModel';
 import { useAccountsViewModel } from '../viewModels/useAccountsViewModel';
 import { useAccountsCategoryViewModel } from '../viewModels/useAccountsCategoryViewModel';
 import { useTransactionsCategoryViewModel } from '../viewModels/useTransactionsCategoryViewModel';
-import AccountCategoryPicker from '../components/AccountCategoryPicker';
 
-// tipi locali veloci
+import CategorySelector from '../components/CategorySelector';
+import AccountSelector from '../components/AccountSelector';
+
+import type { Account } from '../models/Account';
+import type { AccountCategory } from '../models/AccountCategory';
+import type {Transaction} from '../models/Transaction';
+import type { TransactionDetail } from '../models/TransactionDetail';
+
+
+// small icons list used by icon picker (same as other pages)
+const ICONS = [
+  'fa-folder', 'fa-folder-open', 'fa-user', 'fa-users', 'fa-tags', 'fa-tag',
+  'fa-dollar-sign', 'fa-wallet', 'fa-credit-card', 'fa-shopping-cart',
+  'fa-cog', 'fa-bell', 'fa-star', 'fa-heart', 'fa-calendar', 'fa-clock',
+  'fa-search', 'fa-chart-line', 'fa-home', 'fa-briefcase'
+];
+
 type DetailRowUI = {
   id: string; // client id
-  amountStr: string; // decimal string shown to user e.g. "12.34"
-  amountMinor: number;
+  amountStr: string; // user string "12.34"
+  amountMinor: number; // integer cents
   amount_decimal: number;
   description?: string;
   notes?: string;
   tags?: string;
   color?: string;
   icon?: string;
+  // serverId? could add if necessary
 };
 
 export const TransactionsPage: React.FC = () => {
   const {
-    session,
     headers,
     details,
     loading,
@@ -38,8 +55,14 @@ export const TransactionsPage: React.FC = () => {
   const { accountCategories, fetchCategories: fetchAccountCategories } = useAccountsCategoryViewModel();
   const { transactionCategories, fetchCategories: fetchTransactionCategories } = useTransactionsCategoryViewModel();
 
+  // page state
+  const [search, setSearch] = useState('');
+  const [selectedHeader, setSelectedHeader] = useState<number | null>(null); // header id if editing
+  const [editing, setEditing] = useState(false);
+  const [inserting, setInserting] = useState(false);
+
   // form state
-  const [selectedHeader, setSelectedHeader] = useState<number | null>(null); // id
+  const [errors, setErrors] = useState<string | null>(null);
   const [headerForm, setHeaderForm] = useState({
     category_id: undefined as number | undefined,
     from_account_id: undefined as number | undefined,
@@ -58,34 +81,56 @@ export const TransactionsPage: React.FC = () => {
     notes: '',
     tags: '',
     color: '#000000',
-    icon: 'mdi:bank',
+    icon: 'fa-wallet',
     hasDetails: false,
   });
 
-  // detail rows local UI
+  // detail rows
   const [detailRows, setDetailRows] = useState<DetailRowUI[]>([]);
 
-  // pickers state
-  const [catPickerOpen, setCatPickerOpen] = useState(false);
-  const [fromPickerOpen, setFromPickerOpen] = useState(false);
-  const [toPickerOpen, setToPickerOpen] = useState(false);
+  // icon picker
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [iconSearch, setIconSearch] = useState('');
+  const [formIcon, setFormIcon] = useState(headerForm.icon);
 
-  // format and helpers
-  function totalDetailsMinor() {
-    return detailRows.reduce((acc, r) => acc + BigInt(r.amountMinor), 0n);
-  }
+  useEffect(() => { setFormIcon(headerForm.icon); }, [headerForm.icon]);
 
-  function totalDetailsStr() {
-    if (detailRows.length === 0) return '0.00';
-    const decimals = headerForm.amount_decimal;
-    return (totalDetailsMinor()).toString(); // raw minor string if needed
-  }
+  // fetch initial data
+  useEffect(() => {
+    fetchHeaders();
+    fetchAccounts();
+    fetchAccountCategories();
+    fetchTransactionCategories();
+  }, []);
 
-  // when user chooses to edit existing header
+  // helpers: convert server details -> rows
+  const loadDetailsForHeader = async (hid: number) => {
+    await fetchDetailsFor(hid);
+    const srv = details[hid] ?? [];
+    const rows = srv.map((d: TransactionDetail) => ({
+      id: `srv-${d.id}`,
+      amountStr: formatMinorToDecimal(d.amount, d.amount_decimal),
+      amountMinor: Number(d.amount),
+      amount_decimal: d.amount_decimal,
+      description: d.description ?? '',
+      notes: d.notes ?? '',
+      tags: d.tags ?? '',
+      color: d.color ?? '#000000',
+      icon: d.icon ?? 'fa-wallet',
+    }));
+    setDetailRows(rows);
+    setHeaderForm(prev => ({ ...prev, hasDetails: rows.length > 0 }));
+  };
+
+  // open edit
   const openEdit = async (hId: number) => {
-    const h = headers.find(x => x.id === hId);
+    const h = headers.find((x: any) => x.id === hId);
     if (!h) return;
     setSelectedHeader(hId);
+    setEditing(true);
+    setInserting(false);
+    setErrors(null);
+
     setHeaderForm({
       category_id: h.category_id,
       from_account_id: h.from_account_id ?? undefined,
@@ -93,7 +138,7 @@ export const TransactionsPage: React.FC = () => {
       type: h.type,
       status: h.status,
       method: h.method,
-      amountStr: formatAmountStringFromMinor(h.amount, h.amount_decimal),
+      amountStr: formatMinorToDecimal(h.amount as number, h.amount_decimal),
       amount_decimal: h.amount_decimal,
       currency: h.currency,
       exchange_rate: h.exchange_rate,
@@ -104,37 +149,46 @@ export const TransactionsPage: React.FC = () => {
       notes: h.notes ?? '',
       tags: h.tags ?? '',
       color: h.color ?? '#000000',
-      icon: h.icon ?? 'mdi:bank',
+      icon: h.icon ?? 'fa-wallet',
       hasDetails: false,
     });
 
-    // fetch details
-    await fetchDetailsFor(hId);
-    const rows = (details[hId] ?? []).map(d => ({
-      id: `srv-${d.id}`,
-      amountStr: formatAmountStringFromMinor(d.amount, d.amount_decimal),
-      amountMinor: d.amount,
-      amount_decimal: d.amount_decimal,
-      description: d.description ?? '',
-      notes: d.notes ?? '',
-      tags: d.tags ?? '',
-      color: d.color ?? '#000000',
-      icon: d.icon ?? 'mdi:bank',
-    }));
-    setDetailRows(rows);
-    setHeaderForm(prev => ({ ...prev, hasDetails: rows.length > 0 }));
+    // load details and set rows
+    await loadDetailsForHeader(hId);
   };
 
-  function formatAmountStringFromMinor(minor: number, decimals: number) {
-    // returns e.g. "12.34"
-    const s = minor < 0n ? '-' + (-minor).toString() : minor.toString();
-    const padded = s.padStart(decimals + 1, '0');
-    const w = padded.slice(0, padded.length - decimals);
-    const f = padded.slice(padded.length - decimals);
-    return `${w}.${f}`;
-  }
+  // open create
+  const openCreate = () => {
+    setSelectedHeader(null);
+    setEditing(false);
+    setInserting(true);
+    setErrors(null);
+    setHeaderForm({
+      category_id: undefined,
+      from_account_id: undefined,
+      to_account_id: undefined,
+      type: 'expense',
+      status: 'completed',
+      method: 'other',
+      amountStr: '0.00',
+      amount_decimal: 2,
+      currency: 'EUR',
+      exchange_rate: 1.0,
+      dateISO: new Date().toISOString(),
+      transactionDateISO: new Date().toISOString(),
+      scheduledDateISO: undefined,
+      description: '',
+      notes: '',
+      tags: '',
+      color: '#000000',
+      icon: 'fa-wallet',
+      hasDetails: false,
+    });
+    setDetailRows([]);
+    setFormIcon('fa-wallet');
+  };
 
-  // add local empty detail row
+  // detail rows management
   const addDetailRow = () => {
     setDetailRows(prev => [
       ...prev,
@@ -147,83 +201,95 @@ export const TransactionsPage: React.FC = () => {
         notes: '',
         tags: '',
         color: '#000000',
-        icon: 'mdi:bank',
+        icon: 'fa-wallet',
       },
     ]);
     setHeaderForm(prev => ({ ...prev, hasDetails: true }));
   };
 
-  const updateDetailRowAmount = (rowId: string, amountStr: string) => {
-    const minor = parseDecimalToMinorLocal(amountStr, headerForm.amount_decimal);
-    setDetailRows(prev => prev.map(r => (r.id === rowId ? { ...r, amountStr, amountMinor: minor } : r)));
+  const updateDetailRow = (id: string, patch: Partial<DetailRowUI>) => {
+    setDetailRows(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
   };
 
-  function parseDecimalToMinorLocal(amountStr: string, decimals: number) {
+  const updateDetailRowAmount = (id: string, amountStr: string) => {
+    // use viewmodel parseDecimalToMinor if available
+    const minor = parseDecimalToMinor ? Number(parseDecimalToMinor(amountStr, headerForm.amount_decimal)) : parseDecimalLocal(amountStr, headerForm.amount_decimal);
+    updateDetailRow(id, { amountStr, amountMinor: minor });
+  };
+
+  const removeDetailRow = (id: string) => {
+    setDetailRows(prev => {
+      const next = prev.filter(r => r.id !== id);
+      if (next.length === 0) setHeaderForm(prev => ({ ...prev, hasDetails: false }));
+      return next;
+    });
+  };
+
+  // local parse fallback (returns number)
+  function parseDecimalLocal(amountStr: string, decimals: number) {
     const normalized = String(amountStr).replace(',', '.').trim();
-    if (normalized === '') return 0n;
+    if (normalized === '') return 0;
     const parts = normalized.split('.');
     let whole = parts[0] || '0';
     let frac = parts[1] || '';
     if (frac.length > decimals) frac = frac.slice(0, decimals);
     while (frac.length < decimals) frac += '0';
     const combined = whole + frac;
-    const digits = combined.replace(/[^\d-]/g, '');
-    return (digits || '0');
+    const digits = combined.replace(/[^\d-]/g, '') || '0';
+    return Number(digits);
   }
 
-  const removeDetailRow = (rowId: string) => {
-    setDetailRows(prev => {
-      const next = prev.filter(r => r.id !== rowId);
-      // if no rows left, maybe clear hasDetails
-      if (next.length === 0) setHeaderForm(prev => ({ ...prev, hasDetails: false }));
-      return next;
-    });
-  };
+  // totals for details
+  const totalDetailsMinor = useMemo(() => {
+    return detailRows.reduce((acc, r) => acc + (r.amountMinor || 0), 0);
+  }, [detailRows]);
 
-  // validate before submit
+  // validation
   function validateBeforeSubmit() {
-    // header amount convert to minor
-    const headerMinor = parseDecimalToMinor(headerForm.amountStr, headerForm.amount_decimal);
+    setErrors(null);
+    const headerMinor = parseDecimalToMinor ? Number(parseDecimalToMinor(headerForm.amountStr, headerForm.amount_decimal)) : parseDecimalLocal(headerForm.amountStr, headerForm.amount_decimal);
+
     if (headerForm.hasDetails) {
       if (detailRows.length === 0) return { ok: false, message: 'Hai abilitato i dettagli ma non ci sono voci.' };
-      const sum = detailRows.reduce((acc, r) => acc + r.amountMinor, 0n);
-      if (sum !== headerMinor) {
-        return { ok: false, message: `La somma dei dettagli (${formatMinorHuman(sum, headerForm.amount_decimal)}) non coincide con l'importo della testata (${headerForm.amountStr}).` };
+      if (totalDetailsMinor !== headerMinor) {
+        return { ok: false, message: `La somma dei dettagli (${formatMinorHuman(totalDetailsMinor, headerForm.amount_decimal)}) non coincide con l'importo della testata (${headerForm.amountStr}).` };
       }
     } else {
-      // header amount must be > 0
       if (!headerForm.amountStr || headerForm.amountStr.trim() === '') return { ok: false, message: 'Inserisci l\'importo della transazione.' };
     }
-    // category must be selected
+
     if (!headerForm.category_id) return { ok: false, message: 'Seleziona la categoria della transazione.' };
-    // from/to for transfer? if type == 'transfer' ensure both present
+
     if (headerForm.type === 'transfer') {
       if (!headerForm.from_account_id || !headerForm.to_account_id) return { ok: false, message: 'Per trasferimenti serve conto di origine e destinazione.' };
+      if (headerForm.from_account_id === headerForm.to_account_id) return { ok: false, message: 'Origine e destinazione non possono essere lo stesso conto.' };
     }
+
     return { ok: true };
   }
 
   function formatMinorHuman(minor: number, decimals: number) {
-    const sign = minor < 0n ? '-' : '';
-    const m = minor < 0n ? -minor : minor;
-    const s = m.toString().padStart(decimals + 1, '0');
+    const sign = minor < 0 ? '-' : '';
+    const m = Math.abs(minor);
+    const s = String(m).padStart(decimals + 1, '0');
     const w = s.slice(0, s.length - decimals);
     const f = s.slice(s.length - decimals);
     return `${sign}${w}.${f}`;
   }
 
-  // submit (create or update)
+  // submit
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const v = validateBeforeSubmit();
     if (!v.ok) {
-      alert(v.message);
+      setErrors(v.message);
       return;
     }
-    try {
-      const headerMinor = parseDecimalToMinor(headerForm.amountStr, headerForm.amount_decimal);
 
-      if (selectedHeader) {
+    try {
+      const headerMinor = parseDecimalToMinor ? Number(parseDecimalToMinor(headerForm.amountStr, headerForm.amount_decimal)) : parseDecimalLocal(headerForm.amountStr, headerForm.amount_decimal);
+
+      if (editing && selectedHeader) {
         // update header
         await updateTransaction(selectedHeader, {
           id: selectedHeader,
@@ -244,13 +310,11 @@ export const TransactionsPage: React.FC = () => {
           notes: headerForm.notes || undefined,
           tags: headerForm.tags || undefined,
           color: headerForm.color,
-          icon: headerForm.icon,
+          icon: formIcon ?? headerForm.icon,
         });
-
-        // Note: updating details (insert/delete/update) not implemented here for brevity.
-        // In production, implement compare existing details and upsert accordingly.
+        // NOTE: updating details omitted here — add upsert logic if required
       } else {
-        // create
+        // create header (and optionally pass details)
         const detailsPayload = headerForm.hasDetails ? detailRows.map(r => ({
           amountMinor: r.amountMinor,
           amount_decimal: r.amount_decimal,
@@ -273,58 +337,45 @@ export const TransactionsPage: React.FC = () => {
           currency: headerForm.currency,
           exchange_rate: headerForm.exchange_rate,
           dateISO: headerForm.dateISO,
-          transaction_dateISO: headerForm.transactionDateISO,
-          scheduled_dateISO: headerForm.scheduledDateISO ?? null,
+          transactionDateISO: headerForm.transactionDateISO,
+          scheduledDateISO: headerForm.scheduledDateISO ?? null,
           description: headerForm.description || null,
           notes: headerForm.notes || null,
           tags: headerForm.tags || null,
           color: headerForm.color,
-          icon: headerForm.icon,
+          icon: formIcon ?? headerForm.icon,
         }, detailsPayload);
       }
 
-      // refresh
+      // refresh and reset
       await fetchHeaders();
       await fetchAccounts();
-      // clear form
       setSelectedHeader(null);
-      setHeaderForm({
-        category_id: undefined,
-        from_account_id: undefined,
-        to_account_id: undefined,
-        type: 'expense',
-        status: 'completed',
-        method: 'other',
-        amountStr: '0.00',
-        amount_decimal: 2,
-        currency: 'EUR',
-        exchange_rate: 1.0,
-        dateISO: new Date().toISOString(),
-        transactionDateISO: new Date().toISOString(),
-        scheduledDateISO: undefined,
-        description: '',
-        notes: '',
-        tags: '',
-        color: '#000000',
-        icon: 'mdi:bank',
-        hasDetails: false,
-      });
+      setEditing(false);
+      setInserting(false);
+      setHeaderForm(prev => ({ ...prev, amountStr: '0.00', hasDetails: false }));
       setDetailRows([]);
-      alert('Transazione salvata.');
+      setErrors(null);
     } catch (err: any) {
       console.error('save transaction error', err);
-      alert('Errore salvataggio: ' + (err.message ?? String(err)));
+      setErrors('Errore salvataggio: ' + (err?.message ?? String(err)));
     }
   };
 
-  // quick UI helpers for pickers: treat accounts and categories as generic nodes for CategoryPicker
+  const handleDeleteHeader = async (hId: number) => {
+    if (!confirm('Delete transaction?')) return;
+    await deleteTransaction(hId);
+    await fetchHeaders();
+  };
+
+  // utility for account nodes used earlier (for pickers that might expect flat nodes)
   const accountNodesForPicker = accounts.map(a => ({
     id: a.id,
     parent_id: a.parent_id ?? null,
     name: a.name,
     description: a.description ?? '',
     color: a.color ?? '#000000',
-  }));
+  })) as any[];
 
   const transactionCatNodes = transactionCategories.map(c => ({
     id: c.id,
@@ -332,246 +383,326 @@ export const TransactionsPage: React.FC = () => {
     name: c.name,
     description: c.description ?? '',
     color: c.color ?? '#000000',
-  }));
+  })) as any[];
+
+  // prohibited parent ids for account selector: when editing a header we may forbid selecting same account? not necessary here
+  // but we could use the account hierarchy to prevent cycles if parent selection inside accounts is needed.
+
+  // UI: filtered headers by search
+  const visibleHeaders = useMemo(() => {
+    if (!search.trim()) return headers;
+    const q = search.trim().toLowerCase();
+    return headers.filter((h: any) =>
+      (h.description || '').toLowerCase().includes(q) ||
+      (h.notes || '').toLowerCase().includes(q) ||
+      String(h.id).includes(q)
+    );
+  }, [search, headers]);
 
   return (
-    <div className="p-4 flex gap-6">
-      <div className="flex-1">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-2xl font-bold">Transactions</h2>
-          <div>
-            <button onClick={() => { setSelectedHeader(null); setDetailRows([]); }} className="mr-2 px-3 py-1 border rounded">New</button>
-            <button onClick={() => { fetchHeaders(); fetchAccounts(); fetchAccountCategories(); fetchTransactionCategories(); }} className="px-3 py-1 border rounded">Refresh</button>
-          </div>
+    <div className="p-6 w-full max-w-full min-w-0">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-semibold">Transactions</h1>
+          <p className="text-sm opacity-60">Create and manage transactions</p>
         </div>
 
-        {loading && <div>Loading…</div>}
-        {error && <div className="text-red-600">Error: {error}</div>}
-
-        <div className="space-y-2">
-          {headers.map(h => (
-            <div key={h.id} className="p-3 border rounded flex justify-between items-center">
-              <div>
-                <div className="font-semibold">{h.description ?? '(no description)'}</div>
-                <div className="text-sm text-gray-500">Amount: {formatMinorToDecimal(h.amount as number, h.amount_decimal)} {h.currency} • Type: {h.type}</div>
-                <div className="text-xs text-gray-400">From {h.from_account_id ?? '—'} → To {h.to_account_id ?? '—'} • Cat {h.category_id}</div>
-              </div>
-              <div className="flex gap-2">
-                <button className="px-2 py-1 border rounded" onClick={() => openEdit(h.id!)}>Edit</button>
-                <button className="px-2 py-1 border rounded text-red-600" onClick={async () => {
-                  if (!confirm('Delete transaction?')) return;
-                  await deleteTransaction(h.id!);
-                  fetchHeaders();
-                }}>Delete</button>
-              </div>
-            </div>
-          ))}
+        <div className="flex items-center gap-2">
+          <button className="btn btn-ghost btn-sm" onClick={() => { fetchHeaders(); fetchAccounts(); fetchAccountCategories(); fetchTransactionCategories(); }}>Refresh</button>
+          <button className="btn btn-primary btn-sm" onClick={openCreate}>New</button>
         </div>
       </div>
 
-      {/* SIDE FORM */}
-      <aside className="w-[720px] border p-4 rounded-lg shadow bg-white flex-shrink-0">
-        <h3 className="text-lg font-bold mb-4">{selectedHeader ? `Edit transaction #${selectedHeader}` : 'New transaction'}</h3>
+      <div className="grid grid-cols-12 gap-6">
+        {/* left: list */}
+        <div className="col-span-8 bg-base-200 rounded-lg p-4 overflow-auto max-h-[70vh] min-w-0">
+          <div className="flex items-center gap-3 mb-4">
+            <input
+              type="text"
+              placeholder="Search transactions..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="input input-sm input-bordered flex-1"
+            />
+            <div className="text-sm opacity-60">Results: {visibleHeaders.length}</div>
+          </div>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-          {/* category picker */}
-          <div>
-            <label className="text-xs font-medium">Category</label>
-            <div className="flex gap-2 items-center">
-              <div className="flex-1 min-w-0">
-                <div className="border p-2 rounded truncate">{headerForm.category_id ? `ID ${headerForm.category_id}` : '— select category —'}</div>
+          <div className="space-y-3">
+            {visibleHeaders.map((h: any) => (
+              <div key={h.id} className="card bg-base-100 shadow-sm">
+                <div className="card-body p-3 flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <div className="font-medium truncate">{h.description ?? '(no description)'}</div>
+                      <div className="text-sm font-mono">{formatMinorToDecimal(h.amount as number, h.amount_decimal)} {h.currency}</div>
+                    </div>
+                    <div className="text-xs opacity-60 mt-1">Type: <span className="font-medium">{h.type}</span> • Cat: {h.category_id ?? '—'}</div>
+                    <div className="text-xs opacity-50">From {h.from_account_id ?? '—'} → To {h.to_account_id ?? '—'} • {new Date(h.transaction_date).toLocaleString()}</div>
+                  </div>
+
+                  <div className="flex flex-col items-end gap-2">
+                    <div className="flex gap-2">
+                      <button onClick={() => openEdit(h.id)} className="btn btn-ghost btn-sm" title="Edit">
+                        <Pencil size={16} />
+                      </button>
+                      <button onClick={() => handleDeleteHeader(h.id)} className="btn btn-ghost btn-sm text-error" title="Delete">
+                        <Trash size={16} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="relative">
-                <button type="button" onClick={() => { setCatPickerOpen(!catPickerOpen); fetchTransactionCategories(); }} className="px-2 py-1 border rounded">Choose</button>
-                {catPickerOpen && (
-                  <div className="absolute right-0 z-50 mt-2 w-80 bg-white border rounded shadow">
-                    <AccountCategoryPicker
-                      categories={transactionCatNodes}
-                      selectedId={headerForm.category_id ?? undefined}
-                      onSelect={(n) => { setHeaderForm(prev => ({ ...prev, category_id: n.id })); setCatPickerOpen(false); }}
-                      width="w-80"
-                      autoFocusSearch
+            ))}
+
+            {visibleHeaders.length === 0 && <div className="text-sm opacity-60 p-4">No transactions found.</div>}
+          </div>
+        </div>
+
+        {/* right: form, appears only when inserting or editing */}
+        <aside className={`${(inserting || editing) ? 'col-span-4' : 'col-span-4 hidden'}`}>
+          {(inserting || editing) && (
+            <div className="card bg-base-100 shadow-sm rounded-lg overflow-hidden">
+              <div className="card-body">
+                <h3 className="card-title">{editing && selectedHeader ? `Edit: #${selectedHeader}` : 'New transaction'}</h3>
+
+                <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+                  {/* errors */}
+                  {errors && <div className="text-sm text-error">{errors}</div>}
+
+                  {/* category (inline selector) */}
+                  <div className="form-control">
+                    <label className="label"><span className="label-text">Category</span></label>
+                    <CategorySelector<AccountCategory>
+                      categories={transactionCategories}
+                      value={headerForm.category_id ?? null}
+                      onChange={(id) => setHeaderForm(prev => ({ ...prev, category_id: id ?? undefined }))}
+                      placeholder="No category"
                     />
                   </div>
-                )}
-              </div>
-            </div>
-          </div>
 
-          {/* from / to account pickers (side by side) */}
-          <div className="flex gap-2">
-            <div className="flex-1">
-              <label className="text-xs font-medium">From account</label>
-              <div className="flex gap-2">
-                <div className="flex-1 min-w-0">
-                  <div className="border p-2 rounded truncate">{headerForm.from_account_id ? `ID ${headerForm.from_account_id}` : '— select —'}</div>
-                </div>
-                <div className="relative">
-                  <button type="button" onClick={() => { setFromPickerOpen(!fromPickerOpen); fetchAccounts(); }} className="px-2 py-1 border rounded">Choose</button>
-                  {fromPickerOpen && (
-                    <div className="absolute right-0 z-50 mt-2 w-80 bg-white border rounded shadow">
-                      <AccountCategoryPicker
-                        categories={accountNodesForPicker as any}
-                        selectedId={headerForm.from_account_id ?? undefined}
-                        onSelect={(n: any) => { setHeaderForm(prev => ({ ...prev, from_account_id: n.id })); setFromPickerOpen(false); }}
-                        width="w-80"
-                        autoFocusSearch
+                  {/* from / to using AccountSelector */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="form-control">
+                      <label className="label"><span className="label-text">From account</span></label>
+                      <AccountSelector
+                        accounts={accounts}
+                        value={headerForm.from_account_id ?? null}
+                        onChange={(id) => setHeaderForm(prev => ({ ...prev, from_account_id: id ?? undefined }))}
+                        placeholder="No from account"
                       />
                     </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex-1">
-              <label className="text-xs font-medium">To account</label>
-              <div className="flex gap-2">
-                <div className="flex-1 min-w-0">
-                  <div className="border p-2 rounded truncate">{headerForm.to_account_id ? `ID ${headerForm.to_account_id}` : '— select —'}</div>
-                </div>
-                <div className="relative">
-                  <button type="button" onClick={() => { setToPickerOpen(!toPickerOpen); fetchAccounts(); }} className="px-2 py-1 border rounded">Choose</button>
-                  {toPickerOpen && (
-                    <div className="absolute right-0 z-50 mt-2 w-80 bg-white border rounded shadow">
-                      <AccountCategoryPicker
-                        categories={accountNodesForPicker as any}
-                        selectedId={headerForm.to_account_id ?? undefined}
-                        onSelect={(n: any) => { setHeaderForm(prev => ({ ...prev, to_account_id: n.id })); setToPickerOpen(false); }}
-                        width="w-80"
-                        autoFocusSearch
+                    <div className="form-control">
+                      <label className="label"><span className="label-text">To account</span></label>
+                      <AccountSelector
+                        accounts={accounts}
+                        value={headerForm.to_account_id ?? null}
+                        onChange={(id) => setHeaderForm(prev => ({ ...prev, to_account_id: id ?? undefined }))}
+                        placeholder="No to account"
                       />
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* type / method / status */}
-          <div className="flex gap-2">
-            <div className="flex-1">
-              <label className="text-xs font-medium">Type</label>
-              <select className="border p-2 rounded w-full" value={headerForm.type} onChange={e => setHeaderForm(prev => ({ ...prev, type: e.target.value }))}>
-                <option value="expense">expense</option>
-                <option value="income">income</option>
-                <option value="transfer">transfer</option>
-                <option value="reimbursement">reimbursement</option>
-                <option value="refund">refund</option>
-                <option value="other">other</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-medium">Method</label>
-              <select className="border p-2 rounded" value={headerForm.method} onChange={e => setHeaderForm(prev => ({ ...prev, method: e.target.value }))}>
-                <option value="other">other</option>
-                <option value="cash">cash</option>
-                <option value="card">card</option>
-                <option value="bank_transfer">bank_transfer</option>
-                <option value="paypal">paypal</option>
-                <option value="apple">apple</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-medium">Status</label>
-              <select className="border p-2 rounded" value={headerForm.status} onChange={e => setHeaderForm(prev => ({ ...prev, status: e.target.value }))}>
-                <option value="completed">completed</option>
-                <option value="pending">pending</option>
-                <option value="cancelled">cancelled</option>
-                <option value="failed">failed</option>
-              </select>
-            </div>
-          </div>
-
-          {/* amount / currency / dates */}
-          <div className="flex gap-2 items-end">
-            <div className="flex-1">
-              <label className="text-xs font-medium">Amount</label>
-              <input className="border p-2 rounded w-full" value={headerForm.amountStr} onChange={e => setHeaderForm(prev => ({ ...prev, amountStr: e.target.value }))} />
-            </div>
-
-            <div className="w-32">
-              <label className="text-xs font-medium">Decimals</label>
-              <input type="number" className="border p-2 rounded w-full" value={headerForm.amount_decimal} onChange={e => setHeaderForm(prev => ({ ...prev, amount_decimal: Number(e.target.value) }))} />
-            </div>
-
-            <div className="w-32">
-              <label className="text-xs font-medium">Currency</label>
-              <input className="border p-2 rounded w-full" value={headerForm.currency} onChange={e => setHeaderForm(prev => ({ ...prev, currency: e.target.value }))} />
-            </div>
-
-            <div className="w-60">
-              <label className="text-xs font-medium">Transaction date</label>
-              <input type="datetime-local" className="border p-2 rounded w-full" value={toInputLocal(headerForm.transactionDateISO)} onChange={e => setHeaderForm(prev => ({ ...prev, transactionDateISO: fromInputLocal(e.target.value) }))} />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={headerForm.hasDetails} onChange={e => setHeaderForm(prev => ({ ...prev, hasDetails: e.target.checked }))} />
-              Use details
-            </label>
-            <div className="text-sm text-gray-500">When details are used their sum must equal the header amount.</div>
-          </div>
-
-          {/* details table */}
-          {headerForm.hasDetails && (
-            <div className="border rounded p-2 bg-gray-50">
-              <div className="flex items-center justify-between mb-2">
-                <div className="font-medium">Details</div>
-                <div>
-                  <button type="button" onClick={addDetailRow} className="px-2 py-1 border rounded">Add row</button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                {detailRows.map(row => (
-                  <div key={row.id} className="flex gap-2 items-end">
-                    <div className="flex-1">
-                      <label className="text-xs">Description</label>
-                      <input className="border p-2 rounded w-full" value={row.description || ''} onChange={e => setDetailRows(prev => prev.map(r => r.id === row.id ? { ...r, description: e.target.value } : r))} />
-                    </div>
-                    <div style={{ width: 140 }}>
-                      <label className="text-xs">Amount</label>
-                      <input className="border p-2 rounded w-full" value={row.amountStr} onChange={e => updateDetailRowAmount(row.id, e.target.value)} />
-                    </div>
-                    <div>
-                      <button type="button" onClick={() => removeDetailRow(row.id)} className="px-2 py-1 border rounded text-red-600">Del</button>
                     </div>
                   </div>
-                ))}
-              </div>
 
-              <div className="mt-3 text-sm">
-                <strong>Sum details:</strong> {formatMinorToDecimal(totalDetailsMinor(), headerForm.amount_decimal)}
-                <span className="ml-3 text-gray-500">Header: {headerForm.amountStr}</span>
+                  {/* type / method / status */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="form-control">
+                      <label className="label"><span className="label-text">Type</span></label>
+                      <select className="select select-sm select-bordered w-full" value={headerForm.type} onChange={e => setHeaderForm(prev => ({ ...prev, type: e.target.value }))}>
+                        <option value="expense">expense</option>
+                        <option value="income">income</option>
+                        <option value="transfer">transfer</option>
+                        <option value="reimbursement">reimbursement</option>
+                        <option value="refund">refund</option>
+                        <option value="other">other</option>
+                      </select>
+                    </div>
+
+                    <div className="form-control">
+                      <label className="label"><span className="label-text">Method</span></label>
+                      <select className="select select-sm select-bordered w-full" value={headerForm.method} onChange={e => setHeaderForm(prev => ({ ...prev, method: e.target.value }))}>
+                        <option value="other">other</option>
+                        <option value="cash">cash</option>
+                        <option value="card">card</option>
+                        <option value="bank_transfer">bank_transfer</option>
+                        <option value="paypal">paypal</option>
+                        <option value="apple">apple</option>
+                      </select>
+                    </div>
+
+                    <div className="form-control">
+                      <label className="label"><span className="label-text">Status</span></label>
+                      <select className="select select-sm select-bordered w-full" value={headerForm.status} onChange={e => setHeaderForm(prev => ({ ...prev, status: e.target.value }))}>
+                        <option value="completed">completed</option>
+                        <option value="pending">pending</option>
+                        <option value="cancelled">cancelled</option>
+                        <option value="failed">failed</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* amount / currency / date */}
+                  <div className="grid grid-cols-1 gap-2">
+                    <div className="form-control">
+                      <label className="label"><span className="label-text">Amount</span></label>
+                      <input
+                        className="input input-sm input-bordered"
+                        value={headerForm.amountStr}
+                        onChange={e => setHeaderForm(prev => ({ ...prev, amountStr: e.target.value }))}
+                        inputMode="decimal"
+                        placeholder="0.00"
+                      />
+                      <label className="label"><span className="label-text-alt text-xs">Enter with dot or comma. We store minor units under the hood.</span></label>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="form-control">
+                        <label className="label"><span className="label-text">Currency</span></label>
+                        <input className="input input-sm input-bordered" value={headerForm.currency} onChange={e => setHeaderForm(prev => ({ ...prev, currency: e.target.value }))} />
+                      </div>
+
+                      <div className="form-control">
+                        <label className="label"><span className="label-text">Transaction date</span></label>
+                        <input type="datetime-local" value={toInputLocal(headerForm.transactionDateISO)} onChange={e => setHeaderForm(prev => ({ ...prev, transactionDateISO: fromInputLocal(e.target.value) }))} className="input input-sm input-bordered" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* details toggle */}
+                  <div className="form-control">
+                    <label className="cursor-pointer label">
+                      <span className="label-text">Use details</span>
+                      <input type="checkbox" className="toggle toggle-sm ml-2" checked={headerForm.hasDetails} onChange={e => setHeaderForm(prev => ({ ...prev, hasDetails: e.target.checked }))} />
+                    </label>
+                  </div>
+
+                  {/* details table */}
+                  {headerForm.hasDetails && (
+                    <div className="border rounded p-2 bg-base-200">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="font-medium">Details</div>
+                        <button type="button" className="btn btn-sm btn-ghost" onClick={addDetailRow}><Plus size={14} /></button>
+                      </div>
+
+                      <div className="space-y-2">
+                        {detailRows.map(row => (
+                          <div key={row.id} className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+                            <div className="col-span-2">
+                              <label className="label"><span className="label-text text-xs">Description</span></label>
+                              <input className="input input-sm input-bordered w-full" value={row.description || ''} onChange={e => updateDetailRow(row.id, { description: e.target.value })} />
+                            </div>
+                            <div>
+                              <label className="label"><span className="label-text text-xs">Amount</span></label>
+                              <div className="flex gap-2">
+                                <input className="input input-sm input-bordered w-full" value={row.amountStr} onChange={e => updateDetailRowAmount(row.id, e.target.value)} />
+                                <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeDetailRow(row.id)} title="Remove"><Trash size={14} /></button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="mt-3 text-sm">
+                        <strong>Sum details:</strong> {formatMinorToDecimal(totalDetailsMinor, headerForm.amount_decimal)}
+                        <span className="ml-3 text-xs opacity-60">Header: {headerForm.amountStr}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* description / notes */}
+                  <div className="form-control">
+                    <label className="label"><span className="label-text">Description</span></label>
+                    <input className="input input-sm input-bordered" value={headerForm.description} onChange={e => setHeaderForm(prev => ({ ...prev, description: e.target.value }))} />
+                  </div>
+
+                  <div className="form-control">
+                    <label className="label"><span className="label-text">Notes / Tags</span></label>
+                    <input className="input input-sm input-bordered" value={headerForm.notes} onChange={e => setHeaderForm(prev => ({ ...prev, notes: e.target.value }))} />
+                    <input className="input input-sm input-bordered mt-2" value={headerForm.tags} onChange={e => setHeaderForm(prev => ({ ...prev, tags: e.target.value }))} placeholder="comma separated tags" />
+                  </div>
+
+                  {/* color & icon */}
+                  <div className="grid grid-cols-3 gap-2 items-end">
+                    <div className="form-control">
+                      <label className="label"><span className="label-text">Color</span></label>
+                      <input type="color" className="w-12 h-10 p-1 rounded" value={headerForm.color} onChange={e => setHeaderForm(prev => ({ ...prev, color: e.target.value }))} />
+                    </div>
+                    <div className="form-control col-span-2">
+                      <label className="label"><span className="label-text">Icon</span></label>
+                      <div className="flex items-center gap-2">
+                        <input className="input input-sm input-bordered flex-1" value={formIcon} onChange={e => { setFormIcon(e.target.value); setHeaderForm(prev => ({ ...prev, icon: e.target.value })); }} />
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPickerOpen(true)}>Scegli icona</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 mt-2">
+                    <button type="button" onClick={() => { setSelectedHeader(null); setEditing(false); setInserting(false); setDetailRows([]); }} className="btn btn-ghost btn-sm">Cancel</button>
+                    <button type="submit" className="btn btn-primary btn-sm">Save</button>
+                  </div>
+                </form>
               </div>
             </div>
           )}
+        </aside>
+      </div>
 
-          <div className="flex justify-end gap-2 mt-4">
-            <button type="button" onClick={() => { setSelectedHeader(null); setDetailRows([]); }} className="py-2 px-4 rounded border">Clear</button>
-            <button type="submit" className="bg-blue-500 text-white py-2 px-4 rounded">Save</button>
+      {/* icon picker modal (same interaction as categories/accounts) */}
+      {pickerOpen && (
+        <div className="modal modal-open">
+          <div className="modal-box max-w-3xl">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-medium">Seleziona icona</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setPickerOpen(false)}>Chiudi</button>
+            </div>
+
+            <div className="mb-3">
+              <input
+                type="text"
+                placeholder="Cerca icone..."
+                value={iconSearch}
+                onChange={(e) => setIconSearch(e.target.value)}
+                className="input input-sm input-bordered w-full"
+              />
+            </div>
+
+            <div className="grid grid-cols-6 gap-2 max-h-60 overflow-auto">
+              {ICONS
+                .filter(ic => !iconSearch || ic.toLowerCase().includes(iconSearch.toLowerCase()))
+                .map(ic => (
+                  <button
+                    key={ic}
+                    type="button"
+                    className={`p-2 rounded hover:bg-base-200 focus:outline-none flex flex-col items-center justify-center`}
+                    onClick={() => { setFormIcon(ic); setHeaderForm(prev => ({ ...prev, icon: ic })); setPickerOpen(false); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setFormIcon(ic); setHeaderForm(prev => ({ ...prev, icon: ic })); setPickerOpen(false); } }}
+                    aria-label={`Seleziona icona ${ic}`}
+                  >
+                    <div className="w-10 h-10 flex items-center justify-center">
+                      <i className={`fa ${(ic)} fa-xl`} aria-hidden />
+                    </div>
+                    <div className="text-xs mt-1 truncate">{ic.replace('fa-','')}</div>
+                  </button>
+                ))
+              }
+            </div>
           </div>
-        </form>
-      </aside>
+        </div>
+      )}
     </div>
   );
 };
 
-// helpers for datetime-local <-> ISO
+export default TransactionsPage;
+
+// helpers for datetime-local <-> ISO (same as before)
 function toInputLocal(iso?: string) {
   if (!iso) return '';
   const d = new Date(iso);
-  // yyyy-mm-ddThh:mm
   const off = d.getTimezoneOffset();
   const local = new Date(d.getTime() - off * 60 * 1000);
   return local.toISOString().slice(0, 16);
 }
 function fromInputLocal(val: string) {
   if (!val) return new Date().toISOString();
-  // val like "2023-08-28T12:34"
   const dt = new Date(val);
   return dt.toISOString();
 }
-
-export default TransactionsPage;
