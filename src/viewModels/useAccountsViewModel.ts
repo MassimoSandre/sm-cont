@@ -138,11 +138,12 @@ export function useAccountsViewModel() {
 
   return {
     accounts,
-    loading,
-    error,
+ 
     fetchAccounts,
     addAccount,
     updateAccount,
     deleteAccount,
+    loading,
+    error,
   };
 }

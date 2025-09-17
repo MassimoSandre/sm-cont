@@ -1,4 +1,4 @@
-import React, { use, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { Tree } from '@minoru/react-dnd-treeview';
@@ -106,7 +106,7 @@ const CustomNode: React.FC<{
 };
 
 export const TransactionsCategoryPage: React.FC = () => {
-  const { transactionCategories, addTransactionCategory, fetchCategories, updateTransactionCategory, deleteTransactionCategory, loading } = useTransactionsCategoryViewModel();
+  const { transactionCategories, addTransactionCategory, fetchCategories, updateTransactionCategory, deleteTransactionCategory } = useTransactionsCategoryViewModel();
 
   const [treeData, setTreeData] = useState<CategoryNode[]>(() => buildTreeNodes(transactionCategories));
   const [selected, setSelected] = useState<CategoryNode | null>(null);

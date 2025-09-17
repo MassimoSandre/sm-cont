@@ -271,8 +271,7 @@ export function useTransactionsViewModel() {
     session,
     headers,
     details,
-    loading,
-    error,
+
     fetchHeaders,
     fetchDetailsFor,
     createTransaction,
@@ -280,5 +279,7 @@ export function useTransactionsViewModel() {
     deleteTransaction,
     parseDecimalToMinor,
     formatMinorToDecimal,
+    loading,
+    error,
   };
 }

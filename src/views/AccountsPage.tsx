@@ -25,24 +25,6 @@ function formatBalanceFromCents(cents: number, decimals = 2, currency = 'EUR') {
   }
 }
 
-/* --- tree builders --- */
-type CategoryNode = AccountCategory & { children?: CategoryNode[] };
-function buildCategoryTree(categories: AccountCategory[]): CategoryNode[] {
-  const map = new Map<number, CategoryNode>();
-  const roots: CategoryNode[] = [];
-  categories.forEach(cat => map.set(cat.id, { ...cat, children: [] }));
-  categories.forEach(cat => {
-    if (cat.parent_id != null) {
-      const parent = map.get(cat.parent_id);
-      if (parent) parent.children?.push(map.get(cat.id)!);
-      else roots.push(map.get(cat.id)!);
-    } else {
-      roots.push(map.get(cat.id)!);
-    }
-  });
-  return roots;
-}
-
 type AccountNode = Account & { children?: AccountNode[] };
 function buildAccountsTree(accounts: Account[]): AccountNode[] {
   const map = new Map<number, AccountNode>();
@@ -181,7 +163,7 @@ const AccountCard: React.FC<{
 
 /* --- main page --- */
 export const AccountsPage: React.FC = () => {
-  const { accounts, loading, error, addAccount, updateAccount, deleteAccount, fetchAccounts } = useAccountsViewModel();
+  const { accounts, addAccount, updateAccount, deleteAccount, fetchAccounts } = useAccountsViewModel();
   const { accountCategories, fetchCategories: fetchAccountCategories } = useAccountsCategoryViewModel();
 
   const [selected, setSelected] = useState<Account | null>(null);
@@ -217,7 +199,7 @@ export const AccountsPage: React.FC = () => {
   const accountDescendants = useMemo(() => selected ? getAccountDescendants(accounts, selected.id) : [], [selected, accounts]);
   const prohibitedParentIds = selected ? [selected.id, ...accountDescendants] : [];
 
-  const categoryTree = useMemo(() => buildCategoryTree(accountCategories), [accountCategories]);
+  //const categoryTree = useMemo(() => buildCategoryTree(accountCategories), [accountCategories]);
   const accountsTree = useMemo(() => buildAccountsTree(accounts), [accounts]);
 
   const [search, setSearch] = useState('');

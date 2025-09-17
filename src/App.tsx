@@ -1,4 +1,4 @@
-import React from 'react';
+//import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import MainLayout from './layouts/MainLayout';
 import TransactionsPage from './views/TransactionsPage';
@@ -6,7 +6,7 @@ import TransactionsCategoryPage from './views/TransactionsCategoryPage';
 import AccountsPage from './views/AccountsPage';
 import AccountsCategoryPage from './views/AccountsCategoryPage';
 
-import '@fortawesome/fontawesome-free/css/all.min.css';
+//import '@fortawesome/fontawesome-free/css/all.min.css';
 
 
 /*{ to: '/transactions',         label: 'Transactions' },

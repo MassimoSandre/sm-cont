@@ -9,9 +9,7 @@ import { useTransactionsCategoryViewModel } from '../viewModels/useTransactionsC
 import CategorySelector from '../components/CategorySelector';
 import AccountSelector from '../components/AccountSelector';
 
-import type { Account } from '../models/Account';
 import type { AccountCategory } from '../models/AccountCategory';
-import type {Transaction} from '../models/Transaction';
 import type { TransactionDetail } from '../models/TransactionDetail';
 
 
@@ -40,8 +38,6 @@ export const TransactionsPage: React.FC = () => {
   const {
     headers,
     details,
-    loading,
-    error,
     fetchHeaders,
     fetchDetailsFor,
     createTransaction,
@@ -52,7 +48,7 @@ export const TransactionsPage: React.FC = () => {
   } = useTransactionsViewModel();
 
   const { accounts, fetchAccounts } = useAccountsViewModel();
-  const { accountCategories, fetchCategories: fetchAccountCategories } = useAccountsCategoryViewModel();
+  const { fetchCategories: fetchAccountCategories } = useAccountsCategoryViewModel();
   const { transactionCategories, fetchCategories: fetchTransactionCategories } = useTransactionsCategoryViewModel();
 
   // page state
@@ -282,7 +278,7 @@ export const TransactionsPage: React.FC = () => {
     e.preventDefault();
     const v = validateBeforeSubmit();
     if (!v.ok) {
-      setErrors(v.message);
+      setErrors(v.message?.toString() ?? 'Validation error');
       return;
     }
 
@@ -337,8 +333,8 @@ export const TransactionsPage: React.FC = () => {
           currency: headerForm.currency,
           exchange_rate: headerForm.exchange_rate,
           dateISO: headerForm.dateISO,
-          transactionDateISO: headerForm.transactionDateISO,
-          scheduledDateISO: headerForm.scheduledDateISO ?? null,
+          transaction_dateISO: headerForm.transactionDateISO,
+          scheduled_dateISO: headerForm.scheduledDateISO ?? null,
           description: headerForm.description || null,
           notes: headerForm.notes || null,
           tags: headerForm.tags || null,
@@ -368,22 +364,7 @@ export const TransactionsPage: React.FC = () => {
     await fetchHeaders();
   };
 
-  // utility for account nodes used earlier (for pickers that might expect flat nodes)
-  const accountNodesForPicker = accounts.map(a => ({
-    id: a.id,
-    parent_id: a.parent_id ?? null,
-    name: a.name,
-    description: a.description ?? '',
-    color: a.color ?? '#000000',
-  })) as any[];
 
-  const transactionCatNodes = transactionCategories.map(c => ({
-    id: c.id,
-    parent_id: c.parent_id ?? null,
-    name: c.name,
-    description: c.description ?? '',
-    color: c.color ?? '#000000',
-  })) as any[];
 
   // prohibited parent ids for account selector: when editing a header we may forbid selecting same account? not necessary here
   // but we could use the account hierarchy to prevent cycles if parent selection inside accounts is needed.
