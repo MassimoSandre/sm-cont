@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import {createClient} from '@supabase/supabase-js';
 
 // Prendo le variabili dal file .env
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
@@ -18,15 +18,15 @@ let session: any = null;
  * se non loggato → fa login e salva la sessione
  */
 export async function getSession() {
-  if (session) return session;
+    if (session) return session;
 
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email: EMAIL,
-    password: PASSWORD,
-  });
+    const {data, error} = await supabase.auth.signInWithPassword({
+        email: EMAIL,
+        password: PASSWORD,
+    });
 
-  if (error) throw error;
+    if (error) throw error;
 
-  session = data.session;
-  return session;
+    session = data.session;
+    return session;
 }

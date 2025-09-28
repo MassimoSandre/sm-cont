@@ -1,28 +1,28 @@
 export interface Transaction {
-  id: number;
-  category_id: number;
-  from_account_id?: number;
-  to_account_id?: number;
+    id: number;
+    category_id: number;
+    from_account_id?: number;
+    to_account_id?: number;
 
-  type: string;
-  status: string;
-  method: string;
+    type: string;
+    status: string;
+    method: string;
 
-  amount: number;
-  amount_decimal: number;
+    amount: number;
+    amount_decimal: number;
 
-  currency: string;
-  exchange_rate: number;
+    currency: string;
+    exchange_rate: number;
 
-  date: string; 
-  transaction_date: string;
-  scheduled_date?: string;
+    date: string;
+    transaction_date: string;
+    scheduled_date?: string;
 
-  description?: string;
+    description?: string;
 
-  notes?: string;
-  tags?: string;
+    notes?: string;
+    tags?: string;
 
-  color: string;
-  icon: string;
+    color: string;
+    icon: string;
 }

@@ -12,7 +12,7 @@ export interface Account {
     balance_decimal: number;
 
     virtual: boolean;
-    budget:boolean;
+    budget: boolean;
     currency: string;
 
     color: string;
